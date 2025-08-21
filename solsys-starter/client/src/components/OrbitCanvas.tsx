@@ -1,194 +1,477 @@
-import React, { useEffect, useRef } from 'react'
+interface PlanetData {
+  size: number
+  color: number
+  orbitColor: number
+}import React, { useEffect, useRef } from 'react'
 import * as THREE from 'three'
-import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls'
 import { positionAt } from '../lib/ephem'
 import type { EphemSet } from '../lib/api'
+import type { ViewSettings, ClickInfo } from '../types'
 
-const KM_TO_UNIT = 1 / 1_000_000 // 1e6 km per scene unit
+// Scale constants
+const VIEWING_SCALE = 1 / 50_000_000  // 1 unit = 50 million km (for visibility)
+const REALISTIC_SCALE = 1 / 149_597_870.7  // 1 unit = 1 AU (realistic distances)
 
-export type ClickInfo = { id: string, label: string, kind: 'planet' | 'star' | 'dwarf' | 'small' | 'spacecraft' }
-
-export default function OrbitCanvas({
-  sets,
-  frameIndex,
-  onPick,
-}: {
+interface OrbitCanvasProps {
   sets: EphemSet[]
   frameIndex: number
   onPick: (info: ClickInfo) => void
-}) {
+  settings: ViewSettings
+}
+
+export default function OrbitCanvas({ sets, frameIndex, onPick, settings }: OrbitCanvasProps) {
   const mountRef = useRef<HTMLDivElement>(null)
   const sceneRef = useRef<THREE.Scene>()
   const cameraRef = useRef<THREE.PerspectiveCamera>()
   const rendererRef = useRef<THREE.WebGLRenderer>()
   const objsRef = useRef<Record<string, THREE.Object3D>>({})
+  const orbitLinesRef = useRef<Record<string, THREE.Line>>({})
+  const animationIdRef = useRef<number>()
   const raycaster = useRef(new THREE.Raycaster())
   const mouse = useRef(new THREE.Vector2())
 
+  // Camera controls state
+  const controlsRef = useRef({
+    isMouseDown: false,
+    lastMouseX: 0,
+    lastMouseY: 0,
+    cameraDistance: 15,
+    cameraTheta: 0,
+    cameraPhi: Math.PI / 4,
+    followOffset: new THREE.Vector3(0, 5, 10),
+    targetPosition: new THREE.Vector3(),
+    targetLookAt: new THREE.Vector3(),
+    isTransitioning: false
+  })
+
   useEffect(() => {
-    const mount = mountRef.current!
+    const mount = mountRef.current
+    if (!mount) return
+
+    console.log('🚀 Starting solar system...')
+
+    // Create scene
     const scene = new THREE.Scene()
     scene.background = new THREE.Color(0x0b0f16)
 
-    const camera = new THREE.PerspectiveCamera(60, mount.clientWidth / mount.clientHeight, 0.1, 1e9)
-    camera.position.set(0, 50, 120)
+    // Setup camera with adaptive initial distance
+    const camera = new THREE.PerspectiveCamera(75, mount.clientWidth / mount.clientHeight, 0.1, 1e9)
+    const updateCameraPosition = (smooth = false) => {
+      const controls = controlsRef.current
+      
+      // Handle following a planet
+      if (settings.followPlanet && objsRef.current[settings.followPlanet]) {
+        const target = objsRef.current[settings.followPlanet]
+        const targetPos = target.position.clone()
+        
+        // Calculate appropriate distance based on object and scale
+        let followDistance = 10
+        if (settings.followPlanet === '10') { // Sun
+          followDistance = settings.useRealisticSizes ? 0.5 : 8
+        } else {
+          followDistance = settings.useRealisticScale ? 2 : 6
+        }
+        
+        const offset = new THREE.Vector3(0, followDistance * 0.3, followDistance)
+        const newPos = targetPos.clone().add(offset)
+        
+        if (smooth && !controls.isTransitioning) {
+          // Smooth transition to new position
+          controls.isTransitioning = true
+          controls.targetPosition.copy(newPos)
+          controls.targetLookAt.copy(targetPos)
+        } else if (!smooth || controls.isTransitioning) {
+          camera.position.copy(newPos)
+          camera.lookAt(targetPos)
+        }
+      } else {
+        // Free camera mode
+        camera.position.x = controls.cameraDistance * Math.sin(controls.cameraPhi) * Math.cos(controls.cameraTheta)
+        camera.position.y = controls.cameraDistance * Math.cos(controls.cameraPhi)
+        camera.position.z = controls.cameraDistance * Math.sin(controls.cameraPhi) * Math.sin(controls.cameraTheta)
+        camera.lookAt(0, 0, 0)
+        controls.isTransitioning = false
+      }
+    }
+    
+    // Set initial camera distance based on scale mode
+    controlsRef.current.cameraDistance = settings.useRealisticScale ? 5 : 15
+    updateCameraPosition()
 
     const renderer = new THREE.WebGLRenderer({ antialias: true })
     renderer.setSize(mount.clientWidth, mount.clientHeight)
+    renderer.shadowMap.enabled = true
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap
     mount.appendChild(renderer.domElement)
 
-    // Lights
-    const ambient = new THREE.AmbientLight(0xffffff, 0.6)
-    scene.add(ambient)
-    const sunLight = new THREE.PointLight(0xffffff, 2.0, 0, 2)
+    // Lighting setup
+    const ambientLight = new THREE.AmbientLight(0x404040, 0.3)
+    scene.add(ambientLight)
+    
+    const sunLight = new THREE.PointLight(0xffffff, 2, 0)
     sunLight.position.set(0, 0, 0)
+    sunLight.castShadow = true
+    sunLight.shadow.mapSize.width = 2048
+    sunLight.shadow.mapSize.height = 2048
     scene.add(sunLight)
 
-    // Grid (ecliptic plane approximate)
-    const grid = new THREE.GridHelper(200, 20, 0x233048, 0x182238)
-    ;(grid.material as THREE.Material).opacity = 0.6
-    ;(grid.material as THREE.Material as any).transparent = true
+    // Create grid
+    const grid = new THREE.GridHelper(30, 30, 0x333344, 0x222233)
+    grid.material.transparent = true
+    grid.material.opacity = 0.4
     scene.add(grid)
-
-    // camera controls (OrbitControls if available, otherwise a minimal fallback)
-    let controls: OrbitControls | null = null
-    try {
-      controls = new OrbitControls(camera, renderer.domElement)
-      controls.enableDamping = true
-      controls.dampingFactor = 0.05
-      controls.minDistance = 5
-      controls.maxDistance = 5000
-    } catch {
-      // Fallback mouse controls if OrbitControls cannot be constructed
-      let isDown = false; let lastX = 0; let lastY = 0
-      renderer.domElement.addEventListener('mousedown', e => {
-        isDown = true; lastX = e.clientX; lastY = e.clientY
-      })
-      window.addEventListener('mouseup', () => { isDown = false })
-      window.addEventListener('mousemove', e => {
-        if (!isDown) return
-        const dx = (e.clientX - lastX) / 200
-        const dy = (e.clientY - lastY) / 200
-        camera.position.applyAxisAngle(new THREE.Vector3(0, 1, 0), -dx)
-        camera.position.y += dy * 20
-        camera.lookAt(0, 0, 0)
-        lastX = e.clientX; lastY = e.clientY
-      })
-      window.addEventListener('wheel', e => {
-        camera.position.multiplyScalar(e.deltaY > 0 ? 1.1 : 0.9)
-      })
-    }
 
     sceneRef.current = scene
     cameraRef.current = camera
     rendererRef.current = renderer
 
-    const onResize = () => {
-      if (!mount || !rendererRef.current || !cameraRef.current) return
-      const w = mount.clientWidth, h = mount.clientHeight
-      rendererRef.current.setSize(w, h)
-      cameraRef.current.aspect = w / h
-      cameraRef.current.updateProjectionMatrix()
+    // Mouse controls
+    const onMouseDown = (e: MouseEvent) => {
+      controlsRef.current.isMouseDown = true
+      controlsRef.current.lastMouseX = e.clientX
+      controlsRef.current.lastMouseY = e.clientY
     }
-    const ro = new ResizeObserver(onResize); ro.observe(mount)
 
-    const animate = () => {
-      renderer.render(scene, camera)
-      requestAnimationFrame(animate)
+    const onMouseUp = () => {
+      controlsRef.current.isMouseDown = false
     }
-    animate()
 
-    const onClick = (e: MouseEvent) => {
-      if (!rendererRef.current || !cameraRef.current) return
-      const rect = rendererRef.current.domElement.getBoundingClientRect()
-      mouse.current.x = ((e.clientX - rect.left) / rect.width) * 2 - 1
-      mouse.current.y = -((e.clientY - rect.top) / rect.height) * 2 + 1
-      raycaster.current.setFromCamera(mouse.current, cameraRef.current)
-      const meshes: THREE.Object3D[] = []
-      Object.values(objsRef.current).forEach(o => meshes.push(o))
-      const hits = raycaster.current.intersectObjects(meshes, true)
-      if (hits.length > 0) {
-        const obj = hits[0].object
-        const tag = (obj.userData && obj.userData.pick) as ClickInfo | undefined
-        if (tag) onPick(tag)
+    const onMouseMove = (e: MouseEvent) => {
+      if (!controlsRef.current.isMouseDown) return
+      
+      // Only allow manual camera control when not following a planet
+      if (settings.followPlanet) return
+      
+      const deltaX = e.clientX - controlsRef.current.lastMouseX
+      const deltaY = e.clientY - controlsRef.current.lastMouseY
+      
+      controlsRef.current.cameraTheta -= deltaX * 0.01
+      controlsRef.current.cameraPhi = Math.max(0.1, Math.min(Math.PI - 0.1, controlsRef.current.cameraPhi + deltaY * 0.01))
+      
+      updateCameraPosition()
+      
+      controlsRef.current.lastMouseX = e.clientX
+      controlsRef.current.lastMouseY = e.clientY
+    }
+
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault()
+      if (settings.followPlanet) {
+        // Adjust follow distance when following a planet
+        const offset = controlsRef.current.followOffset
+        const factor = e.deltaY > 0 ? 1.1 : 0.9
+        offset.multiplyScalar(factor)
+        // Clamp the follow distance
+        const dist = offset.length()
+        if (dist < 0.1) offset.normalize().multiplyScalar(0.1)
+        if (dist > 100) offset.normalize().multiplyScalar(100)
+        updateCameraPosition()
+      } else {
+        // Normal zoom for free camera
+        controlsRef.current.cameraDistance *= e.deltaY > 0 ? 1.1 : 0.9
+        const maxDist = settings.useRealisticScale ? 10 : 100
+        controlsRef.current.cameraDistance = Math.max(0.1, Math.min(maxDist, controlsRef.current.cameraDistance))
+        updateCameraPosition()
       }
     }
+
+    // Click handling with raycasting
+    const onClick = (e: MouseEvent) => {
+      if (!renderer || !camera) return
+      
+      const rect = renderer.domElement.getBoundingClientRect()
+      mouse.current.x = ((e.clientX - rect.left) / rect.width) * 2 - 1
+      mouse.current.y = -((e.clientY - rect.top) / rect.height) * 2 + 1
+      
+      raycaster.current.setFromCamera(mouse.current, camera)
+      
+      const meshes = Object.values(objsRef.current).filter(obj => obj instanceof THREE.Mesh)
+      const intersects = raycaster.current.intersectObjects(meshes)
+      
+      if (intersects.length > 0) {
+        const clickedObject = intersects[0].object
+        const pickData = clickedObject.userData.pick as ClickInfo
+        if (pickData) {
+          console.log('🖱️ Clicked:', pickData.label)
+          onPick(pickData)
+        }
+      }
+    }
+
+    // Window resize handler
+    const onResize = () => {
+      if (!mount || !renderer || !camera) return
+      const width = mount.clientWidth
+      const height = mount.clientHeight
+      renderer.setSize(width, height)
+      camera.aspect = width / height
+      camera.updateProjectionMatrix()
+    }
+
+    // Event listeners
+    renderer.domElement.addEventListener('mousedown', onMouseDown)
+    window.addEventListener('mouseup', onMouseUp)
+    window.addEventListener('mousemove', onMouseMove)
+    renderer.domElement.addEventListener('wheel', onWheel)
     renderer.domElement.addEventListener('click', onClick)
+    window.addEventListener('resize', onResize)
+
+    // Animation loop with smooth camera transitions
+    const animate = () => {
+      // Handle smooth camera transitions
+      if (controlsRef.current.isTransitioning) {
+        camera.position.lerp(controlsRef.current.targetPosition, 0.05)
+        const currentLookAt = new THREE.Vector3()
+        camera.getWorldDirection(currentLookAt)
+        currentLookAt.multiplyScalar(-1).add(camera.position)
+        currentLookAt.lerp(controlsRef.current.targetLookAt, 0.05)
+        camera.lookAt(currentLookAt)
+        
+        // Check if transition is complete
+        if (camera.position.distanceTo(controlsRef.current.targetPosition) < 0.1) {
+          controlsRef.current.isTransitioning = false
+        }
+      }
+      
+      renderer.render(scene, camera)
+      animationIdRef.current = requestAnimationFrame(animate)
+    }
+    animationIdRef.current = requestAnimationFrame(animate)
+
+    console.log('✅ Basic setup complete')
 
     return () => {
+      if (animationIdRef.current) {
+        cancelAnimationFrame(animationIdRef.current)
+      }
+      
+      // Remove event listeners
+      renderer.domElement.removeEventListener('mousedown', onMouseDown)
+      window.removeEventListener('mouseup', onMouseUp)
+      window.removeEventListener('mousemove', onMouseMove)
+      renderer.domElement.removeEventListener('wheel', onWheel)
       renderer.domElement.removeEventListener('click', onClick)
-      ro.disconnect()
-      controls?.dispose()
+      window.removeEventListener('resize', onResize)
+      
       renderer.dispose()
-      mount.removeChild(renderer.domElement)
+      if (mount.contains(renderer.domElement)) {
+        mount.removeChild(renderer.domElement)
+      }
     }
   }, [])
 
-  // Build or update bodies and orbits when sets change
+  // Add celestial objects when data is available
   useEffect(() => {
     const scene = sceneRef.current
-    if (!scene) return
+    if (!scene || !sets.length) return
 
-    // clear previous (but keep lights/grid)
-    for (const k in objsRef.current) {
-      const obj = objsRef.current[k]
-      scene.remove(obj)
-    }
+    console.log('🪐 Adding celestial objects...', sets.length, 'sets')
+    console.log('🔧 Scale mode:', settings.useRealisticScale ? 'Realistic' : 'Viewing')
+    console.log('📏 Size mode:', settings.useRealisticSizes ? 'Realistic' : 'Enhanced')
+
+    // Clear previous objects (keep lights and grid)
+    Object.values(objsRef.current).forEach(obj => scene.remove(obj))
+    Object.values(orbitLinesRef.current).forEach(line => scene.remove(line))
     objsRef.current = {}
+    orbitLinesRef.current = {}
 
-    // Sun sphere at origin
-    const sunGeo = new THREE.SphereGeometry(5, 32, 16)
-    const sunMat = new THREE.MeshBasicMaterial({ color: 0xffd27d })
+    // Get the appropriate scaling
+    const distanceScale = settings.useRealisticScale ? REALISTIC_SCALE : VIEWING_SCALE
+
+    // Add Sun - size based on settings
+    const sunRadius = settings.useRealisticSizes ? REAL_SIZES.sun * distanceScale : 1.0
+    const sunGeo = new THREE.SphereGeometry(Math.max(0.3, sunRadius), 32, 16)
+    const sunMat = new THREE.MeshStandardMaterial({ 
+      color: 0xffff00,
+      emissive: 0xffaa00,
+      emissiveIntensity: 0.5,
+      roughness: 1,
+      metalness: 0
+    })
     const sunMesh = new THREE.Mesh(sunGeo, sunMat)
-    sunMesh.userData.pick = { id: '10', label: 'Sun', kind: 'star' } as ClickInfo
+    sunMesh.position.set(0, 0, 0)
+    sunMesh.userData.pick = { id: '10', label: 'Sun', kind: 'star' }
     scene.add(sunMesh)
+    objsRef.current['10'] = sunMesh
+    console.log('☀️ Sun added at origin, radius:', Math.max(0.3, sunRadius).toExponential(2))
 
-    sets.forEach(set => {
+    // Add planets and their orbital paths
+    sets.forEach((set, index) => {
       if (!set.states || set.states.length === 0) return
-      const label = HORIZON_NAMES[set.id] || set.id
-      const kind: ClickInfo['kind'] = PLANET_IDS.has(set.id) ? 'planet' : 'small'
 
-      // path line
-      const pts: THREE.Vector3[] = set.states.map(s => new THREE.Vector3(s.r[0] * KM_TO_UNIT, s.r[1] * KM_TO_UNIT, s.r[2] * KM_TO_UNIT))
-      const pathGeo = new THREE.BufferGeometry().setFromPoints(pts)
-      const pathMat = new THREE.LineBasicMaterial({ linewidth: 1 })
-      const line = new THREE.Line(pathGeo, pathMat)
-      scene.add(line)
+      const planetInfo = PLANET_DATA[set.id]
+      const name = HORIZON_NAMES[set.id] || set.id
 
-      // body sphere
-      const size = SIZE_BY_ID[set.id] || 1.5
-      const geo = new THREE.SphereGeometry(size, 24, 16)
-      const mat = new THREE.MeshStandardMaterial({ color: COLOR_BY_ID[set.id] || 0x9db4ff, metalness: 0.1, roughness: 0.6 })
+      // Calculate planet size based on settings
+      let size: number
+      if (settings.useRealisticSizes) {
+        size = Math.max(0.02, (REAL_SIZES[set.id] || 6371) * distanceScale)
+      } else {
+        // Enhanced visibility size - smaller to prevent overlap
+        const baseSize = planetInfo?.size || 0.8
+        size = Math.min(0.8, baseSize * 0.2) // Much smaller enhanced sizes
+      }
+
+      // Create planet
+      const geo = new THREE.SphereGeometry(size, 20, 16)
+      const mat = new THREE.MeshStandardMaterial({ 
+        color: planetInfo?.color || 0x9999ff,
+        roughness: 0.8,
+        metalness: 0.1
+      })
+      
       const mesh = new THREE.Mesh(geo, mat)
-      mesh.userData.pick = { id: set.id, label, kind }
+      mesh.castShadow = true
+      mesh.receiveShadow = true
+      mesh.userData.pick = { id: set.id, label: name, kind: 'planet' }
+
       scene.add(mesh)
       objsRef.current[set.id] = mesh
-    })
-  }, [sets])
+      
+      // Create orbit path from actual data (if enabled)
+      if (settings.showOrbits && set.states.length > 1) {
+        const orbitPoints: THREE.Vector3[] = []
+        set.states.forEach(state => {
+          const pos = [
+            state.r[0] * distanceScale,
+            state.r[1] * distanceScale, 
+            state.r[2] * distanceScale
+          ]
+          orbitPoints.push(new THREE.Vector3(pos[0], pos[1], pos[2]))
+        })
+        
+        const orbitGeometry = new THREE.BufferGeometry().setFromPoints(orbitPoints)
+        const orbitMaterial = new THREE.LineBasicMaterial({ 
+          color: planetInfo?.orbitColor || 0x666666,
+          transparent: true,
+          opacity: 0.6
+        })
+        const orbitLine = new THREE.Line(orbitGeometry, orbitMaterial)
+        scene.add(orbitLine)
+        orbitLinesRef.current[set.id] = orbitLine
+      }
 
-  // animate positions per frameIndex
+      console.log(`🪐 ${name} added, size: ${size.toExponential(2)}`)
+    })
+
+    // Update grid size based on scale
+    const gridObj = scene.children.find(child => child instanceof THREE.GridHelper)
+    if (gridObj) {
+      scene.remove(gridObj)
+    }
+    
+    const gridSize = settings.useRealisticScale ? 5 : 30
+    const grid = new THREE.GridHelper(gridSize, 20, 0x333344, 0x222233)
+    grid.material.transparent = true
+    grid.material.opacity = 0.4
+    scene.add(grid)
+
+    console.log('✅ All objects added, scene has', scene.children.length, 'children')
+  }, [sets, settings])
+
+  // Animate positions based on frameIndex
   useEffect(() => {
+    if (!sets.length) return
+
     const objs = objsRef.current
+    const distanceScale = settings.useRealisticScale ? REALISTIC_SCALE : VIEWING_SCALE
+    
     sets.forEach(set => {
       const mesh = objs[set.id] as THREE.Mesh
-      if (!mesh || set.states.length === 0) return
-      const r = positionAt(set.states, frameIndex)
-      mesh.position.set(r[0] * KM_TO_UNIT, r[1] * KM_TO_UNIT, r[2] * KM_TO_UNIT)
-    })
-  }, [frameIndex, sets])
+      if (!mesh || !set.states || set.states.length === 0) return
 
-  return <div ref={mountRef} className="canvas-wrap" />
+      try {
+        // Get position from actual ephemeris data
+        const r = positionAt(set.states, frameIndex)
+        if (r && r.every(coord => isFinite(coord))) {
+          // Scale positions to scene units
+          const scaledPos = [
+            r[0] * distanceScale,
+            r[1] * distanceScale, 
+            r[2] * distanceScale
+          ]
+          
+          // Validate position is reasonable
+          const distance = Math.sqrt(scaledPos[0]**2 + scaledPos[1]**2 + scaledPos[2]**2)
+          const maxDist = settings.useRealisticScale ? 50 : 100
+          if (distance > 0.001 && distance < maxDist) {
+            mesh.position.set(scaledPos[0], scaledPos[1], scaledPos[2])
+          }
+        }
+      } catch (error) {
+        console.warn(`Position error for ${set.id}:`, error)
+      }
+    })
+  }, [frameIndex, sets, settings])
+
+  // Handle camera transitions when following planet changes
+  useEffect(() => {
+    if (settings.followPlanet && cameraRef.current) {
+      const controls = controlsRef.current
+      if (objsRef.current[settings.followPlanet]) {
+        const target = objsRef.current[settings.followPlanet]
+        const targetPos = target.position.clone()
+        
+        // Calculate appropriate distance based on object and scale
+        let followDistance = 10
+        if (settings.followPlanet === '10') { // Sun
+          followDistance = settings.useRealisticSizes ? 0.5 : 8
+        } else {
+          followDistance = settings.useRealisticScale ? 2 : 6
+        }
+        
+        const offset = new THREE.Vector3(0, followDistance * 0.3, followDistance)
+        controls.targetPosition.copy(targetPos).add(offset)
+        controls.targetLookAt.copy(targetPos)
+        controls.isTransitioning = true
+      }
+    }
+  }, [settings.followPlanet, settings.useRealisticScale, settings.useRealisticSizes])
+
+  return (
+    <div 
+      ref={mountRef} 
+      style={{ 
+        width: '100%', 
+        height: '100%',
+        background: '#0b0f16',
+        cursor: 'grab'
+      }}
+    />
+  )
 }
 
-const PLANET_IDS = new Set(['199', '299', '399', '499', '599', '699', '799', '899'])
 const HORIZON_NAMES: Record<string, string> = {
   '199': 'Mercury', '299': 'Venus', '399': 'Earth', '499': 'Mars',
-  '599': 'Jupiter', '699': 'Saturn', '799': 'Uranus', '899': 'Neptune', '10': 'Sun'
+  '599': 'Jupiter', '699': 'Saturn', '799': 'Uranus', '899': 'Neptune'
 }
-const SIZE_BY_ID: Record<string, number> = {
-  '10': 5, '399': 2.2, '499': 2.0
+
+interface PlanetData {
+  size: number
+  color: number
+  orbitColor: number
 }
-const COLOR_BY_ID: Record<string, number> = {
-  '399': 0x6ec6ff, // Earth
-  '499': 0xff785a, // Mars
+
+// Real planetary radii in kilometers
+const REAL_SIZES: Record<string, number> = {
+  sun: 696000,     // Sun radius
+  '199': 2439.7,   // Mercury
+  '299': 6051.8,   // Venus  
+  '399': 6371.0,   // Earth
+  '499': 3389.5,   // Mars
+  '599': 69911,    // Jupiter
+  '699': 58232,    // Saturn
+  '799': 25362,    // Uranus
+  '899': 24622     // Neptune
+}
+
+const PLANET_DATA: Record<string, PlanetData> = {
+  '199': { size: 1.2, color: 0x8c7853, orbitColor: 0x8c7853 },
+  '299': { size: 1.8, color: 0xffcc33, orbitColor: 0xffcc33 },
+  '399': { size: 1.8, color: 0x6ec6ff, orbitColor: 0x6ec6ff },
+  '499': { size: 1.5, color: 0xff785a, orbitColor: 0xff785a },
+  '599': { size: 3.5, color: 0xd8ca9d, orbitColor: 0xd8ca9d },
+  '699': { size: 3.0, color: 0xfad5a5, orbitColor: 0xfad5a5 },
+  '799': { size: 2.2, color: 0x4fd0e4, orbitColor: 0x4fd0e4 },
+  '899': { size: 2.2, color: 0x4b70dd, orbitColor: 0x4b70dd }
 }

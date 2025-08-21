@@ -9,5 +9,8 @@ export default defineConfig({
   },
   define: {
     __API_BASE__: JSON.stringify(process.env.VITE_API_BASE || 'http://localhost:8000')
+  },
+  optimizeDeps: {
+    include: ['three']
   }
 })

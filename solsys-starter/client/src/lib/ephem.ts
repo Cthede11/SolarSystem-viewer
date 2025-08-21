@@ -14,11 +14,38 @@ export function lerpVec(a: [number,number,number], b: [number,number,number], t:
 }
 
 export function positionAt(states: EphemState[], fIndex: number): [number,number,number] {
-  if (states.length === 0) return [0,0,0]
+  // Handle empty or invalid states
+  if (!states || states.length === 0) {
+    console.warn('positionAt: No states provided')
+    return [0, 0, 0]
+  }
+
   const i0 = Math.floor(fIndex)
   const i1 = Math.min(states.length - 1, i0 + 1)
   const t = Math.min(1, Math.max(0, fIndex - i0))
-  const r0 = states[i0].r
-  const r1 = states[i1].r
+  
+  // Check if states exist and have valid data
+  const state0 = states[i0]
+  const state1 = states[i1]
+  
+  if (!state0 || !state0.r || state0.r.length < 3) {
+    console.warn('positionAt: Invalid state0 data', state0)
+    return [0, 0, 0]
+  }
+  
+  if (!state1 || !state1.r || state1.r.length < 3) {
+    console.warn('positionAt: Invalid state1 data', state1)
+    return state0.r.slice(0, 3) as [number, number, number]
+  }
+  
+  const r0 = state0.r
+  const r1 = state1.r
+  
+  // Ensure we have valid numbers
+  if (r0.some(isNaN) || r1.some(isNaN)) {
+    console.warn('positionAt: NaN values detected', { r0, r1 })
+    return [0, 0, 0]
+  }
+  
   return lerpVec(r0, r1, t)
 }

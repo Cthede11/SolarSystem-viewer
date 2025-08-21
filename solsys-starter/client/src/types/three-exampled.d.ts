@@ -1,6 +1,5 @@
-// Minimal shim in case the editor lags on picking up example types.
-// You can delete this once the editor resolves them correctly.
-declare module 'three/examples/jsm/controls/OrbitControls' {
+// Updated types for Three.js OrbitControls
+declare module 'three/addons/controls/OrbitControls.js' {
   import { Camera, EventDispatcher, MOUSE, TOUCH, Vector3 } from 'three';
   export class OrbitControls extends EventDispatcher {
     constructor(object: Camera, domElement?: HTMLElement);
@@ -16,5 +15,6 @@ declare module 'three/examples/jsm/controls/OrbitControls' {
     touches: { ONE: TOUCH; TWO: TOUCH };
     update(): void;
     dispose(): void;
+    reset(): void;
   }
 }
