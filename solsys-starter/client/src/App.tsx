@@ -1,227 +1,305 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react'
-import OrbitCanvas from './components/OrbitCanvas'
-import InfoDrawer, { Info } from './components/InfoDrawer'
-import SettingsMenu from './components/SettingsMenu'
-import PlanetDirectory from './components/PlanetDirectory'
-import { getEphem, EphemSet } from './lib/api'
-import type { ViewSettings } from './types'
+import React, { useEffect, useMemo, useState } from 'react'
 
-// Enhanced planet information for InfoDrawer
-const DETAILED_INFO: Record<string, any> = {
-  '10': {
-    details: 'The Sun is a G-type main-sequence star that formed approximately 4.6 billion years ago. It generates energy through nuclear fusion in its core, converting hydrogen into helium.',
-    stats: { mass: '1.989 × 10³⁰ kg', volume: '1.412 × 10²⁷ m³', surfaceGravity: '274 m/s²' }
-  },
-  '199': {
-    details: 'Mercury has no substantial atmosphere and experiences extreme temperature variations. Its heavily cratered surface resembles our Moon.',
-    stats: { mass: '3.301 × 10²³ kg', gravity: '3.7 m/s²', dayLength: '58.6 Earth days' }
-  },
-  '299': {
-    details: 'Venus is the hottest planet in our solar system due to its thick, toxic atmosphere made mostly of carbon dioxide.',
-    stats: { mass: '4.867 × 10²⁴ kg', gravity: '8.87 m/s²', dayLength: '243 Earth days' }
-  },
-  '399': {
-    details: 'Earth is the third planet from the Sun and the only astronomical object known to harbor life. Its surface is 71% water.',
-    stats: { mass: '5.972 × 10²⁴ kg', gravity: '9.8 m/s²', dayLength: '24 hours' }
-  },
-  '499': {
-    details: 'Mars has seasons, polar ice caps, weather, volcanoes and canyons. It may have had liquid water on its surface in the past.',
-    stats: { mass: '6.39 × 10²³ kg', gravity: '3.71 m/s²', dayLength: '24h 37m' }
-  },
-  '599': {
-    details: 'Jupiter is the largest planet in our solar system. It\'s a gas giant with a Great Red Spot storm and over 90 known moons.',
-    stats: { mass: '1.898 × 10²⁷ kg', gravity: '24.79 m/s²', dayLength: '9h 56m' }
-  },
-  '699': {
-    details: 'Saturn is famous for its prominent ring system. It\'s a gas giant with the lowest density of any planet in our solar system.',
-    stats: { mass: '5.683 × 10²⁶ kg', gravity: '10.44 m/s²', dayLength: '10h 33m' }
-  },
-  '799': {
-    details: 'Uranus is an ice giant that rotates on its side. It has a faint ring system and is composed mostly of water, methane, and ammonia ices.',
-    stats: { mass: '8.681 × 10²⁵ kg', gravity: '8.69 m/s²', dayLength: '17h 14m' }
-  },
-  '899': {
-    details: 'Neptune is the outermost planet in our solar system. It\'s an ice giant with the strongest winds in the solar system.',
-    stats: { mass: '1.024 × 10²⁶ kg', gravity: '11.15 m/s²', dayLength: '16h 7m' }
-  }
+type DetailsEvent = { id: string | null }
+
+type PlanetCard = {
+  id: string
+  name: string
+  kind: 'star' | 'planet'
+  color: string
+  description: string
+  stats: Record<string, string>
+  facts: string[]
+  horizonsId: string
 }
 
-export default function App() {
-  const [sets, setSets] = useState<EphemSet[]>([])
-  const [loading, setLoading] = useState(false)
-  const [idx, setIdx] = useState(0)
-  const [maxIdx, setMaxIdx] = useState(0)
-  const [playing, setPlaying] = useState(true)
-  const [info, setInfo] = useState<Info | null>(null)
-  const [showSettings, setShowSettings] = useState(false)
-  const [showDirectory, setShowDirectory] = useState(true)
-  const [settings, setSettings] = useState<ViewSettings>({
-    useRealisticScale: false,
-    useRealisticSizes: false,
-    showOrbits: true,
-    followPlanet: null
-  })
-  const timer = useRef<number | null>(null)
+const DB: Record<string, PlanetCard> = {
+  '10': {
+    id: '10',
+    name: 'Sun',
+    kind: 'star',
+    color: '#ffdd44',
+    description:
+      'The Sun is the star at the center of our Solar System. A nearly perfect sphere of hot plasma powered by nuclear fusion.',
+    stats: {
+      mass: '1.989 × 10³⁰ kg',
+      surfaceTemp: '5,505°C',
+      radius: '696,340 km',
+    },
+    facts: [
+      '99.86% of Solar System mass',
+      'Light → Earth: ~8 min',
+      'Core temp ~15M °C',
+    ],
+    horizonsId: '10',
+  },
+  '199': {
+    id: '199',
+    name: 'Mercury',
+    kind: 'planet',
+    color: '#8c7853',
+    description:
+      'Smallest planet and closest to the Sun. Extreme temperature swing and a cratered surface.',
+    stats: {
+      mass: '3.285 × 10²³ kg',
+      dayLength: '59 Earth days',
+      orbitalPeriod: '88 days',
+    },
+    facts: ['No moons', 'Day longer than year', 'Heavily cratered'],
+    horizonsId: '199',
+  },
+  '299': {
+    id: '299',
+    name: 'Venus',
+    kind: 'planet',
+    color: '#ffcc33',
+    description:
+      'Second planet from the Sun. Dense CO₂ atmosphere traps heat, making it the hottest planet.',
+    stats: {
+      mass: '4.867 × 10²⁴ kg',
+      dayLength: '243 Earth days',
+      orbitalPeriod: '225 days',
+    },
+    facts: ['Retrograde rotation', 'Thick clouds', 'Hottest surface'],
+    horizonsId: '299',
+  },
+  '399': {
+    id: '399',
+    name: 'Earth',
+    kind: 'planet',
+    color: '#6ec6ff',
+    description:
+      'Our home world. Liquid water, protective atmosphere, and a thriving biosphere.',
+    stats: {
+      mass: '5.972 × 10²⁴ kg',
+      gravity: '9.807 m/s²',
+      dayLength: '24 hours',
+    },
+    facts: ['71% water', 'One natural satellite (Moon)'],
+    horizonsId: '399',
+  },
+  '499': {
+    id: '499',
+    name: 'Mars',
+    kind: 'planet',
+    color: '#ff785a',
+    description:
+      'A cold desert world with the largest volcano in the Solar System (Olympus Mons).',
+    stats: {
+      mass: '6.39 × 10²³ kg',
+      dayLength: '24h 37m',
+      orbitalPeriod: '687 days',
+    },
+    facts: ['Two small moons', 'Ancient water signs'],
+    horizonsId: '499',
+  },
+  '599': {
+    id: '599',
+    name: 'Jupiter',
+    kind: 'planet',
+    color: '#d8ca9d',
+    description:
+      'The largest planet. Powerful magnetic field and the Great Red Spot storm.',
+    stats: { mass: '1.898 × 10²⁷ kg', dayLength: '9h 56m' },
+    facts: ['>95 moons', 'Massive magnetosphere'],
+    horizonsId: '599',
+  },
+  '699': {
+    id: '699',
+    name: 'Saturn',
+    kind: 'planet',
+    color: '#fad5a5',
+    description: 'Gas giant famous for its rings.',
+    stats: { mass: '5.683 × 10²⁶ kg', orbitalPeriod: '29 years' },
+    facts: ['Rings are billions of particles', 'Moon Titan has thick atmosphere'],
+    horizonsId: '699',
+  },
+  '799': {
+    id: '799',
+    name: 'Uranus',
+    kind: 'planet',
+    color: '#4fd0e4',
+    description: 'Ice giant tipped on its side (axial tilt ~98°).',
+    stats: { dayLength: '17h 14m', orbitalPeriod: '84 years' },
+    facts: ['Faint rings', 'Methane-rich atmosphere'],
+    horizonsId: '799',
+  },
+  '899': {
+    id: '899',
+    name: 'Neptune',
+    kind: 'planet',
+    color: '#4b70dd',
+    description: 'Farthest planet with the strongest winds in the Solar System.',
+    stats: { dayLength: '16h 6m', orbitalPeriod: '165 years' },
+    facts: ['Dark Spot storms', 'Moon Triton likely captured'],
+    horizonsId: '899',
+  },
+}
 
-  const range = useMemo(() => {
-    // default: a 10-day window from today
-    const start = new Date()
-    const stop = new Date(Date.now() + 10 * 24 * 3600 * 1000)
-    const fmt = (d: Date) => d.toISOString().slice(0, 10) // YYYY-MM-DD
-    return { start: fmt(start), stop: fmt(stop), step: '6 h' }
+// Optional props kept for compatibility with existing imports.
+// They’re ignored for opening/closing behavior; we drive that via events.
+type Props = {
+  selectedPlanet?: string | null
+  onClose?: () => void
+}
+
+export default function InfoDrawer({ onClose }: Props) {
+  // Open only via app:showDetails; not on selection/focus.
+  const [open, setOpen] = useState(false)
+  const [id, setId] = useState<string | null>(null)
+  const card = useMemo(() => (id ? DB[id] : null), [id])
+
+  useEffect(() => {
+    const onShow = (e: Event) => {
+      const ce = e as CustomEvent<DetailsEvent>
+      const next = ce.detail?.id || null
+      if (next && DB[next]) {
+        setId(next)
+        setOpen(true)
+      }
+    }
+    const onHide = () => setOpen(false)
+
+    window.addEventListener('app:showDetails', onShow)
+    window.addEventListener('app:hideDetails', onHide)
+    return () => {
+      window.removeEventListener('app:showDetails', onShow)
+      window.removeEventListener('app:hideDetails', onHide)
+    }
   }, [])
 
-  useEffect(() => {
-    setLoading(true)
-    // Load all major planets by default: Mercury, Venus, Earth, Mars, Jupiter, Saturn, Uranus, Neptune
-    const allPlanetIds = ['199', '299', '399', '499', '599', '699', '799', '899']
-    getEphem(allPlanetIds, range.start, range.stop, range.step, '500@0')
-      .then(data => {
-        setSets(data)
-        const samples = Math.max(...data.map(d => d.states.length))
-        setMaxIdx(Math.max(0, samples - 1))
-      })
-      .catch(err => {
-        console.error(err)
-      })
-      .finally(() => setLoading(false))
-  }, [range.start, range.stop, range.step])
-
-  useEffect(() => {
-    if (!playing) { 
-      if (timer.current) cancelAnimationFrame(timer.current)
-      return 
-    }
-    const tick = () => {
-      setIdx(i => (i + 0.25) % (maxIdx > 0 ? maxIdx : 1))
-      timer.current = requestAnimationFrame(tick)
-    }
-    timer.current = requestAnimationFrame(tick)
-    return () => { 
-      if (timer.current) cancelAnimationFrame(timer.current) 
-    }
-  }, [playing, maxIdx])
-
-  const onPick = (tag: { id: string; label: string; kind: Info['kind'] }) => {
-    // Show info drawer with enhanced information
-    const detailedInfo = DETAILED_INFO[tag.id] || {}
-    setInfo({ 
-      id: tag.id, 
-      label: tag.label, 
-      kind: tag.kind, 
-      extra: { 
-        source: 'Horizons',
-        clickedAt: new Date().toLocaleTimeString(),
-        details: detailedInfo.details,
-        stats: detailedInfo.stats
-      }
-    })
-    
-    // Focus camera on the clicked object
-    if (tag.kind === 'planet' || tag.kind === 'star') {
-      setSettings(prev => ({
-        ...prev,
-        followPlanet: tag.id
-      }))
-    }
+  const close = () => {
+    setOpen(false)
+    onClose?.()
   }
 
-  const handleDirectorySelect = (planetId: string) => {
-    // Focus camera and show info for directory selection
-    setSettings(prev => ({
-      ...prev,
-      followPlanet: planetId
-    }))
-    
-    // Also show info drawer with detailed information
-    const planetNames: Record<string, string> = {
-      '10': 'Sun', '199': 'Mercury', '299': 'Venus', '399': 'Earth', 
-      '499': 'Mars', '599': 'Jupiter', '699': 'Saturn', '799': 'Uranus', '899': 'Neptune'
-    }
-    
-    const detailedInfo = DETAILED_INFO[planetId] || {}
-    setInfo({
-      id: planetId,
-      label: planetNames[planetId] || planetId,
-      kind: planetId === '10' ? 'star' : 'planet',
-      extra: {
-        source: 'Directory',
-        selectedAt: new Date().toLocaleTimeString(),
-        details: detailedInfo.details,
-        stats: detailedInfo.stats
-      }
-    })
-  }
+  if (!open || !card) return null
 
   return (
-    <div id="app">
-      <div className="header">
-        <h1>Solar System Viewer</h1>
-        <div className="controls">
-          <button className="btn" onClick={() => setPlaying(p => !p)}>
-            {playing ? 'Pause' : 'Play'}
-          </button>
-          <input 
-            className="range" 
-            type="range" 
-            min={0} 
-            max={maxIdx || 0} 
-            step={0.01} 
-            value={idx} 
-            onChange={e => setIdx(parseFloat(e.target.value))}
-          />
-          <span style={{ opacity: .7 }}>frame {idx.toFixed(0)} / {maxIdx}</span>
-          {loading && <span className="spinner" />}
+    <div
+      style={{
+        position: 'absolute',
+        left: '12px',
+        top: '80px',
+        width: '320px',
+        maxWidth: '90vw',
+        background: 'var(--panel, #0b1220)',
+        border: '1px solid var(--border, #1e2a3a)',
+        borderRadius: '14px',
+        boxShadow: '0 16px 32px rgba(0,0,0,0.45)',
+        color: 'var(--fg, #e6eefc)',
+        zIndex: 70,
+        overflow: 'hidden'
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 10,
+          padding: '12px 14px',
+          borderBottom: '1px solid var(--border, #1e2a3a)',
+          background:
+            'linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0))'
+        }}
+      >
+        <div
+          style={{
+            width: 28,
+            height: 28,
+            borderRadius: 8,
+            background: card.color,
+            display: 'grid',
+            placeItems: 'center',
+            fontSize: 16
+          }}
+        >
+          {card.kind === 'star' ? '☀️' : '🪐'}
         </div>
-        <div className="header-buttons">
-          <button className="btn" onClick={() => setSettings(prev => ({ ...prev, followPlanet: null }))}>
-            🎯 Free Camera
-          </button>
-          <button className="btn" onClick={() => setShowDirectory(!showDirectory)}>
-            📂 {showDirectory ? 'Hide' : 'Show'} Directory
-          </button>
-          <button className="btn" onClick={() => setShowSettings(true)}>
-            ⚙️ Settings
-          </button>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontWeight: 700 }}>{card.name}</div>
+          <div style={{ fontSize: 12, opacity: 0.8 }}>
+            {card.kind.toUpperCase()} • Directory
+          </div>
         </div>
+        <button
+          className="btn"
+          onClick={close}
+          title="Close"
+          style={{ padding: '4px 8px', fontSize: 12 }}
+        >
+          ✕
+        </button>
       </div>
-      
-      <div className="canvas-wrap">
-        <div className="legend">
-          <div><strong>Solar System Viewer</strong></div>
-          <div>• Drag to orbit • Scroll to zoom</div>
-          <div>• Click objects to focus & inspect</div>
-          <div>• Use directory panel to explore</div>
-          {settings.useRealisticScale && (
-            <div style={{ color: '#ffaa00', marginTop: 4 }}>
-              • Realistic scale active
-            </div>
-          )}
+
+      <div style={{ padding: 14, display: 'grid', gap: 10 }}>
+        <div
+          style={{
+            background: 'rgba(255,255,255,0.04)',
+            border: '1px solid var(--border, #1e2a3a)',
+            borderRadius: 8,
+            padding: '8px 10px',
+            fontSize: 12,
+          }}
+        >
+          <div style={{ opacity: 0.75, marginBottom: 4 }}>Horizons ID:</div>
+          <strong>{card.horizonsId}</strong>
         </div>
-        
-        <OrbitCanvas 
-          sets={sets} 
-          frameIndex={idx} 
-          onPick={onPick}
-          settings={settings}
-        />
-        
-        {showDirectory && (
-          <PlanetDirectory 
-            onSelectPlanet={handleDirectorySelect}
-            selectedPlanet={settings.followPlanet}
-            settings={settings}
-          />
-        )}
-        
-        <InfoDrawer info={info} onClose={() => setInfo(null)} />
-        
-        <SettingsMenu 
-          settings={settings}
-          onSettingsChange={setSettings}
-          isOpen={showSettings}
-          onClose={() => setShowSettings(false)}
-        />
+
+        <div>
+          <div style={{ fontWeight: 700, marginBottom: 6 }}>Description</div>
+          <div style={{ fontSize: 14, lineHeight: 1.4 }}>{card.description}</div>
+        </div>
+
+        <div>
+          <div style={{ fontWeight: 700, marginBottom: 6 }}>Key Statistics</div>
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: '1fr 1fr',
+              gap: 8
+            }}
+          >
+            {Object.entries(card.stats).map(([k, v]) => (
+              <div
+                key={k}
+                style={{
+                  background: 'rgba(255,255,255,0.04)',
+                  border: '1px solid var(--border, #1e2a3a)',
+                  borderRadius: 8,
+                  padding: '6px 8px',
+                  fontSize: 12
+                }}
+              >
+                <div style={{ opacity: 0.75, marginBottom: 4 }}>{k}</div>
+                <div style={{ fontWeight: 600 }}>{v}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div>
+          <div style={{ fontWeight: 700, marginBottom: 6 }}>Fast facts</div>
+          <ul style={{ margin: 0, paddingLeft: 18 }}>
+            {card.facts.map((f, i) => (
+              <li key={i} style={{ marginBottom: 4, fontSize: 13 }}>
+                {f}
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button
+            className="btn"
+            onClick={() => window.dispatchEvent(new CustomEvent('app:select', { detail: { id } }))}
+          >
+            🎯 Focus
+          </button>
+          <button className="btn secondary-btn" onClick={close}>
+            Close
+          </button>
+        </div>
       </div>
     </div>
   )

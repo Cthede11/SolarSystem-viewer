@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import type { ViewSettings } from '../types'
 
 interface PlanetInfo {
@@ -50,14 +50,14 @@ const PLANET_DATABASE: Record<string, PlanetInfo> = {
     description: 'Mercury is the smallest planet in our solar system and the closest to the Sun. It has extreme temperature variations and no substantial atmosphere.',
     facts: [
       'Closest planet to the Sun',
-      'No atmosphere or moons',
-      'Day temp: 427°C, Night: -173°C',
-      'Orbital period: 88 Earth days'
+      'Day is longer than its year (176 Earth days)',
+      'No moons',
+      'Surface heavily cratered like the Moon'
     ],
     stats: { 
-      mass: '3.301 × 10²³ kg', 
+      mass: '3.285 × 10²³ kg', 
       gravity: '3.7 m/s²', 
-      dayLength: '58.6 Earth days',
+      dayLength: '59 Earth days',
       orbitalPeriod: '88 days'
     },
     color: '#8c7853'
@@ -89,7 +89,7 @@ const PLANET_DATABASE: Record<string, PlanetInfo> = {
     type: 'planet',
     diameter: '12,756 km',
     distance: '150M km from Sun',
-    description: 'Earth is our home planet and the only known planet with life. It has liquid water, a protective atmosphere, and a suitable temperature range.',
+    description: 'Earth is our home planet and the only known place with life. It has liquid water, a protective atmosphere, and a suitable temperature range.',
     facts: [
       'Only known planet with life',
       '71% of surface is water',
@@ -98,7 +98,7 @@ const PLANET_DATABASE: Record<string, PlanetInfo> = {
     ],
     stats: { 
       mass: '5.972 × 10²⁴ kg', 
-      gravity: '9.8 m/s²', 
+      gravity: '9.807 m/s²', 
       dayLength: '24 hours',
       orbitalPeriod: '365.25 days'
     },
@@ -108,14 +108,14 @@ const PLANET_DATABASE: Record<string, PlanetInfo> = {
     id: '499',
     name: 'Mars',
     type: 'planet',
-    diameter: '6,792 km',
+    diameter: '6,779 km',
     distance: '228M km from Sun',
-    description: 'Mars is the fourth planet from the Sun, known as the "Red Planet" due to iron oxide on its surface. It has polar ice caps and the largest volcano in the solar system.',
+    description: 'Mars is a cold desert world and the fourth planet from the Sun. It has the largest volcano in the solar system (Olympus Mons).',
     facts: [
-      'Iron oxide gives red appearance',
-      'Largest volcano: Olympus Mons (21km high)',
-      'Two small moons: Phobos and Deimos',
-      'Day length similar to Earth: 24h 37m'
+      'Has two small moons (Phobos and Deimos)',
+      'Possible ancient water flow features',
+      'Home to Olympus Mons, tallest volcano',
+      'Often called the Red Planet'
     ],
     stats: { 
       mass: '6.39 × 10²³ kg', 
@@ -129,20 +129,20 @@ const PLANET_DATABASE: Record<string, PlanetInfo> = {
     id: '599',
     name: 'Jupiter',
     type: 'planet',
-    diameter: '142,984 km',
+    diameter: '139,820 km',
     distance: '778M km from Sun',
-    description: 'Jupiter is the largest planet in our solar system. It\'s a gas giant with a Great Red Spot storm and over 90 known moons.',
+    description: 'Jupiter is the largest planet in our solar system, known for its Great Red Spot and strong magnetic field.',
     facts: [
-      'Largest planet in the solar system',
-      'Great Red Spot: storm bigger than Earth',
-      'Over 90 moons, including 4 large ones',
-      'Mostly hydrogen and helium'
+      'Largest planet',
+      'At least 95 known moons',
+      'Great Red Spot is a giant storm',
+      'Strong magnetosphere'
     ],
     stats: { 
       mass: '1.898 × 10²⁷ kg', 
       gravity: '24.79 m/s²', 
       dayLength: '9h 56m',
-      orbitalPeriod: '12 years'
+      orbitalPeriod: '11.86 years'
     },
     color: '#d8ca9d'
   },
@@ -152,7 +152,7 @@ const PLANET_DATABASE: Record<string, PlanetInfo> = {
     type: 'planet',
     diameter: '120,536 km',
     distance: '1.4B km from Sun',
-    description: 'Saturn is famous for its prominent ring system. It\'s a gas giant with the lowest density of any planet in our solar system.',
+    description: 'Saturn is famous for its prominent ring system. It is a gas giant with the lowest density of any planet in our solar system.',
     facts: [
       'Spectacular ring system',
       'Lowest density: would float in water',
@@ -173,12 +173,12 @@ const PLANET_DATABASE: Record<string, PlanetInfo> = {
     type: 'planet',
     diameter: '51,118 km',
     distance: '2.9B km from Sun',
-    description: 'Uranus is an ice giant that rotates on its side. It has a faint ring system and is composed mostly of water, methane, and ammonia ices.',
+    description: 'Uranus is an ice giant that rotates on its side. It has a faint ring system and a very cold atmosphere.',
     facts: [
-      'Rotates on its side (98° tilt)',
-      'Coldest planetary atmosphere: -224°C',
-      'Faint ring system discovered in 1977',
-      'Methane gives blue-green color'
+      'Axis tilted 98° (rolls on its side)',
+      'Faint rings',
+      'Cold methane-rich atmosphere',
+      'Discovered by William Herschel (1781)'
     ],
     stats: { 
       mass: '8.681 × 10²⁵ kg', 
@@ -194,17 +194,17 @@ const PLANET_DATABASE: Record<string, PlanetInfo> = {
     type: 'planet',
     diameter: '49,528 km',
     distance: '4.5B km from Sun',
-    description: 'Neptune is the outermost planet in our solar system. It\'s an ice giant with the strongest winds in the solar system, reaching speeds of up to 2,100 km/h.',
+    description: 'Neptune is the windiest planet and the farthest from the Sun. It has a deep blue color due to methane in its atmosphere.',
     facts: [
-      'Strongest winds: up to 2,100 km/h',
-      'Deep blue color from methane',
-      'Largest moon: Triton (orbits backwards)',
-      'Takes 165 Earth years to orbit Sun'
+      'Strongest winds in the solar system',
+      'Discovered mathematically before observation',
+      'Dark Spot storms like Jupiter\'s',
+      'Moon Triton likely a captured KBO'
     ],
     stats: { 
       mass: '1.024 × 10²⁶ kg', 
       gravity: '11.15 m/s²', 
-      dayLength: '16h 7m',
+      dayLength: '16h 6m',
       orbitalPeriod: '165 years'
     },
     color: '#4b70dd'
@@ -214,12 +214,36 @@ const PLANET_DATABASE: Record<string, PlanetInfo> = {
 export default function PlanetDirectory({ onSelectPlanet, selectedPlanet, settings }: PlanetDirectoryProps) {
   const [expandedPlanet, setExpandedPlanet] = useState<string | null>(null)
 
+  // track DOM nodes to scroll into view
+  const itemRefs = useRef<Record<string, HTMLDivElement | null>>({})
+
+  // auto-expand + scroll when a planet is selected elsewhere (canvas/controls)
+  useEffect(() => {
+    if (!selectedPlanet) return
+    setExpandedPlanet(selectedPlanet)
+    const el = itemRefs.current[selectedPlanet]
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      el.classList.add('selected-pulse')
+      setTimeout(() => el.classList.remove('selected-pulse'), 600)
+    }
+  }, [selectedPlanet])
+
+  // also listen to global selection events so Directory stays in sync
+  useEffect(() => {
+    const onSel = (e: Event) => {
+      const ce = e as CustomEvent<{ id: string | null }>
+      const id = ce.detail?.id
+      if (id) onSelectPlanet(id)
+    }
+    window.addEventListener('app:select', onSel)
+    return () => window.removeEventListener('app:select', onSel)
+  }, [onSelectPlanet])
+
   const handlePlanetClick = (planetId: string) => {
     if (expandedPlanet === planetId) {
-      // If already expanded, collapse
       setExpandedPlanet(null)
     } else {
-      // Expand to show details
       setExpandedPlanet(planetId)
     }
   }
@@ -227,6 +251,14 @@ export default function PlanetDirectory({ onSelectPlanet, selectedPlanet, settin
   const handleFocusClick = (planetId: string, e: React.MouseEvent) => {
     e.stopPropagation()
     onSelectPlanet(planetId)
+    // broadcast for canvas focus/directories to sync
+    window.dispatchEvent(new CustomEvent('app:select', { detail: { id: planetId }}))
+  }
+
+  const handleLearnMore = (planetId: string, e: React.MouseEvent) => {
+    e.stopPropagation()
+    // Open the info drawer ONLY via this event
+    window.dispatchEvent(new CustomEvent('app:showDetails', { detail: { id: planetId }}))
   }
 
   // Order planets by distance from Sun
@@ -248,7 +280,10 @@ export default function PlanetDirectory({ onSelectPlanet, selectedPlanet, settin
           const isExpanded = expandedPlanet === planetId
           
           return (
-            <div key={planetId} className={`planet-item ${isSelected ? 'selected' : ''} ${isExpanded ? 'expanded' : ''}`}>
+            <div
+              key={planetId}
+              ref={el => (itemRefs.current[planetId] = el)}
+              className={`planet-item ${isSelected ? 'selected' : ''} ${isExpanded ? 'expanded' : ''}`}>
               <div className="planet-header" onClick={() => handlePlanetClick(planetId)}>
                 <div 
                   className="planet-icon"
@@ -256,62 +291,35 @@ export default function PlanetDirectory({ onSelectPlanet, selectedPlanet, settin
                 >
                   {planet.type === 'star' ? '☀️' : '🪐'}
                 </div>
-                <div className="planet-basic-info">
-                  <div className="planet-name">{planet.name}</div>
-                  <div className="planet-type">{planet.type}</div>
+                <div className="planet-title">
+                  <div className="name-row">
+                    <strong>{planet.name}</strong>
+                    {isSelected && <span className="eye">👁️</span>}
+                  </div>
+                  <small className="sub">{planet.type.toUpperCase()}</small>
                 </div>
-                <div className="planet-actions">
-                  {isSelected && <span className="following-indicator">👁️</span>}
-                  <button 
-                    className="focus-btn"
-                    onClick={(e) => handleFocusClick(planetId, e)}
-                    title="Focus camera on this object"
-                  >
-                    🎯
-                  </button>
+                <div className="metrics">
+                  <div className="metric"><small>Diameter</small><div>{planet.diameter}</div></div>
+                  <div className="metric"><small>Distance</small><div>{planet.distance}</div></div>
                 </div>
               </div>
-              
+
               {isExpanded && (
                 <div className="planet-details">
-                  <div className="planet-stats-grid">
-                    <div className="stat">
-                      <span className="stat-label">Diameter:</span>
-                      <span className="stat-value">{planet.diameter}</span>
-                    </div>
-                    <div className="stat">
-                      <span className="stat-label">Distance:</span>
-                      <span className="stat-value">{planet.distance}</span>
-                    </div>
-                    <div className="stat">
-                      <span className="stat-label">Horizons ID:</span>
-                      <span className="stat-value">{planet.id}</span>
-                    </div>
-                  </div>
-                  
-                  <p className="planet-description">{planet.description}</p>
-                  
-                  <div className="detailed-stats">
-                    <h4>Physical Properties:</h4>
-                    <div className="stats-grid">
-                      {Object.entries(planet.stats).map(([key, value]) => (
-                        <div key={key} className="detailed-stat">
-                          <span className="stat-key">{key}:</span>
-                          <span className="stat-value">{value}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                  
-                  <div className="planet-facts">
-                    <h4>Key Facts:</h4>
+                  <p className="description">{planet.description}</p>
+                  <div className="facts">
+                    <strong>Fast facts</strong>
                     <ul>
-                      {planet.facts.map((fact, index) => (
-                        <li key={index}>{fact}</li>
-                      ))}
+                      {planet.facts.map((f, i) => <li key={i}>{f}</li>)}
                     </ul>
                   </div>
                   
+                  <div className="stats-grid">
+                    {Object.entries(planet.stats).map(([k, v]) => (
+                      <div key={k} className="stat"><small>{k}</small><div>{v}</div></div>
+                    ))}
+                  </div>
+
                   <div className="action-buttons">
                     <button 
                       className="btn focus-camera-btn"
@@ -319,7 +327,10 @@ export default function PlanetDirectory({ onSelectPlanet, selectedPlanet, settin
                     >
                       🎯 Focus Camera
                     </button>
-                    <button className="btn secondary-btn">
+                    <button 
+                      className="btn secondary-btn"
+                      onClick={(e) => handleLearnMore(planetId, e)}
+                    >
                       📚 Learn More
                     </button>
                   </div>
