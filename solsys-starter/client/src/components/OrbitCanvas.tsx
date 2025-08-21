@@ -1,8 +1,6 @@
-interface PlanetData {
-  size: number
-  color: number
-  orbitColor: number
-}import React, { useEffect, useRef } from 'react'
+// Enhanced OrbitCanvas.tsx with improved camera focus and orbital controls
+
+import React, { useEffect, useRef } from 'react'
 import * as THREE from 'three'
 import { positionAt } from '../lib/ephem'
 import type { EphemSet } from '../lib/api'
@@ -30,7 +28,7 @@ export default function OrbitCanvas({ sets, frameIndex, onPick, settings }: Orbi
   const raycaster = useRef(new THREE.Raycaster())
   const mouse = useRef(new THREE.Vector2())
 
-  // Camera controls state
+  // Enhanced camera controls state
   const controlsRef = useRef({
     isMouseDown: false,
     lastMouseX: 0,
@@ -38,11 +36,112 @@ export default function OrbitCanvas({ sets, frameIndex, onPick, settings }: Orbi
     cameraDistance: 15,
     cameraTheta: 0,
     cameraPhi: Math.PI / 4,
-    followOffset: new THREE.Vector3(0, 5, 10),
+    
+    // Focus-specific controls
+    focusTarget: null as string | null,
+    focusDistance: 10,
+    focusTheta: 0,
+    focusPhi: Math.PI / 4,
+    focusOffset: new THREE.Vector3(),
+    
+    // Smooth transitions
     targetPosition: new THREE.Vector3(),
     targetLookAt: new THREE.Vector3(),
-    isTransitioning: false
+    isTransitioning: false,
+    transitionProgress: 0
   })
+
+  // Calculate appropriate focus distance based on object size and scale
+  const calculateFocusDistance = (objectId: string): number => {
+    const obj = objsRef.current[objectId]
+    if (!obj) return 10
+
+    // Get the object's radius/size
+    let objectRadius = 1
+    if (obj instanceof THREE.Mesh && obj.geometry instanceof THREE.SphereGeometry) {
+      const params = obj.geometry.parameters
+      objectRadius = params.radius || 1
+    }
+
+    let baseDistance: number
+    
+    if (objectId === '10') { // Sun
+      baseDistance = settings.useRealisticSizes ? 
+        Math.max(objectRadius * 3, 0.8) : 
+        Math.max(objectRadius * 2.5, 4)
+    } else { // Planets
+      if (settings.useRealisticScale) {
+        // In realistic scale, objects are tiny, need closer focus
+        baseDistance = Math.max(objectRadius * 8, 0.3)
+      } else {
+        // In viewing scale, give good viewing distance
+        baseDistance = Math.max(objectRadius * 4, 3)
+      }
+    }
+    
+    // Scale based on object type
+    const objectInfo = PLANET_DATA[objectId]
+    if (objectInfo) {
+      const sizeMultiplier = Math.sqrt(objectInfo.size || 1)
+      baseDistance *= sizeMultiplier
+    }
+    
+    return Math.min(Math.max(baseDistance, 0.5), 50)
+  }
+
+  const updateCameraPosition = (smooth = false) => {
+    const camera = cameraRef.current
+    if (!camera) return
+    
+    const controls = controlsRef.current
+    
+    if (settings.followPlanet && objsRef.current[settings.followPlanet]) {
+      // FOCUS MODE: Camera orbits around the focused object
+      const target = objsRef.current[settings.followPlanet]
+      const targetPos = target.position.clone()
+      
+      // Update focus distance if target changed
+      if (controls.focusTarget !== settings.followPlanet) {
+        controls.focusTarget = settings.followPlanet
+        controls.focusDistance = calculateFocusDistance(settings.followPlanet)
+        controls.focusTheta = 0
+        controls.focusPhi = Math.PI / 4
+      }
+      
+      // Calculate orbital camera position around the focused object
+      const focusRadius = controls.focusDistance
+      const x = focusRadius * Math.sin(controls.focusPhi) * Math.cos(controls.focusTheta)
+      const y = focusRadius * Math.cos(controls.focusPhi)
+      const z = focusRadius * Math.sin(controls.focusPhi) * Math.sin(controls.focusTheta)
+      
+      const orbitPosition = new THREE.Vector3(x, y, z)
+      const newCameraPos = targetPos.clone().add(orbitPosition)
+      
+      if (smooth && !controls.isTransitioning) {
+        // Start smooth transition
+        controls.isTransitioning = true
+        controls.targetPosition.copy(newCameraPos)
+        controls.targetLookAt.copy(targetPos)
+        controls.transitionProgress = 0
+      } else if (!smooth || controls.isTransitioning) {
+        // Direct positioning or continue transition
+        camera.position.copy(newCameraPos)
+        camera.lookAt(targetPos)
+      }
+      
+    } else {
+      // FREE CAMERA MODE: Traditional orbital controls around origin
+      controls.focusTarget = null
+      
+      const x = controls.cameraDistance * Math.sin(controls.cameraPhi) * Math.cos(controls.cameraTheta)
+      const y = controls.cameraDistance * Math.cos(controls.cameraPhi)
+      const z = controls.cameraDistance * Math.sin(controls.cameraPhi) * Math.sin(controls.cameraTheta)
+      
+      camera.position.set(x, y, z)
+      camera.lookAt(0, 0, 0)
+      controls.isTransitioning = false
+    }
+  }
 
   useEffect(() => {
     const mount = mountRef.current
@@ -54,45 +153,8 @@ export default function OrbitCanvas({ sets, frameIndex, onPick, settings }: Orbi
     const scene = new THREE.Scene()
     scene.background = new THREE.Color(0x0b0f16)
 
-    // Setup camera with adaptive initial distance
-    const camera = new THREE.PerspectiveCamera(75, mount.clientWidth / mount.clientHeight, 0.1, 1e9)
-    const updateCameraPosition = (smooth = false) => {
-      const controls = controlsRef.current
-      
-      // Handle following a planet
-      if (settings.followPlanet && objsRef.current[settings.followPlanet]) {
-        const target = objsRef.current[settings.followPlanet]
-        const targetPos = target.position.clone()
-        
-        // Calculate appropriate distance based on object and scale
-        let followDistance = 10
-        if (settings.followPlanet === '10') { // Sun
-          followDistance = settings.useRealisticSizes ? 0.5 : 8
-        } else {
-          followDistance = settings.useRealisticScale ? 2 : 6
-        }
-        
-        const offset = new THREE.Vector3(0, followDistance * 0.3, followDistance)
-        const newPos = targetPos.clone().add(offset)
-        
-        if (smooth && !controls.isTransitioning) {
-          // Smooth transition to new position
-          controls.isTransitioning = true
-          controls.targetPosition.copy(newPos)
-          controls.targetLookAt.copy(targetPos)
-        } else if (!smooth || controls.isTransitioning) {
-          camera.position.copy(newPos)
-          camera.lookAt(targetPos)
-        }
-      } else {
-        // Free camera mode
-        camera.position.x = controls.cameraDistance * Math.sin(controls.cameraPhi) * Math.cos(controls.cameraTheta)
-        camera.position.y = controls.cameraDistance * Math.cos(controls.cameraPhi)
-        camera.position.z = controls.cameraDistance * Math.sin(controls.cameraPhi) * Math.sin(controls.cameraTheta)
-        camera.lookAt(0, 0, 0)
-        controls.isTransitioning = false
-      }
-    }
+    // Setup camera
+    const camera = new THREE.PerspectiveCamera(75, mount.clientWidth / mount.clientHeight, 0.01, 1e9)
     
     // Set initial camera distance based on scale mode
     controlsRef.current.cameraDistance = settings.useRealisticScale ? 5 : 15
@@ -125,7 +187,7 @@ export default function OrbitCanvas({ sets, frameIndex, onPick, settings }: Orbi
     cameraRef.current = camera
     rendererRef.current = renderer
 
-    // Mouse controls
+    // Enhanced mouse controls that work in both free and focus modes
     const onMouseDown = (e: MouseEvent) => {
       controlsRef.current.isMouseDown = true
       controlsRef.current.lastMouseX = e.clientX
@@ -139,14 +201,20 @@ export default function OrbitCanvas({ sets, frameIndex, onPick, settings }: Orbi
     const onMouseMove = (e: MouseEvent) => {
       if (!controlsRef.current.isMouseDown) return
       
-      // Only allow manual camera control when not following a planet
-      if (settings.followPlanet) return
-      
       const deltaX = e.clientX - controlsRef.current.lastMouseX
       const deltaY = e.clientY - controlsRef.current.lastMouseY
       
-      controlsRef.current.cameraTheta -= deltaX * 0.01
-      controlsRef.current.cameraPhi = Math.max(0.1, Math.min(Math.PI - 0.1, controlsRef.current.cameraPhi + deltaY * 0.01))
+      if (settings.followPlanet) {
+        // FOCUS MODE: Orbit around the focused object
+        controlsRef.current.focusTheta -= deltaX * 0.01
+        controlsRef.current.focusPhi = Math.max(0.1, Math.min(Math.PI - 0.1, 
+          controlsRef.current.focusPhi + deltaY * 0.01))
+      } else {
+        // FREE CAMERA MODE: Orbit around origin
+        controlsRef.current.cameraTheta -= deltaX * 0.01
+        controlsRef.current.cameraPhi = Math.max(0.1, Math.min(Math.PI - 0.1, 
+          controlsRef.current.cameraPhi + deltaY * 0.01))
+      }
       
       updateCameraPosition()
       
@@ -156,28 +224,30 @@ export default function OrbitCanvas({ sets, frameIndex, onPick, settings }: Orbi
 
     const onWheel = (e: WheelEvent) => {
       e.preventDefault()
+      const factor = e.deltaY > 0 ? 1.1 : 0.9
+      
       if (settings.followPlanet) {
-        // Adjust follow distance when following a planet
-        const offset = controlsRef.current.followOffset
-        const factor = e.deltaY > 0 ? 1.1 : 0.9
-        offset.multiplyScalar(factor)
-        // Clamp the follow distance
-        const dist = offset.length()
-        if (dist < 0.1) offset.normalize().multiplyScalar(0.1)
-        if (dist > 100) offset.normalize().multiplyScalar(100)
-        updateCameraPosition()
+        // FOCUS MODE: Zoom in/out from focused object
+        controlsRef.current.focusDistance *= factor
+        
+        // Clamp focus distance based on object size
+        const minDist = 0.2
+        const maxDist = 100
+        controlsRef.current.focusDistance = Math.max(minDist, Math.min(maxDist, controlsRef.current.focusDistance))
       } else {
-        // Normal zoom for free camera
-        controlsRef.current.cameraDistance *= e.deltaY > 0 ? 1.1 : 0.9
-        const maxDist = settings.useRealisticScale ? 10 : 100
-        controlsRef.current.cameraDistance = Math.max(0.1, Math.min(maxDist, controlsRef.current.cameraDistance))
-        updateCameraPosition()
+        // FREE CAMERA MODE: Normal zoom
+        controlsRef.current.cameraDistance *= factor
+        const maxDist = settings.useRealisticScale ? 100 : 200
+        const minDist = 0.5
+        controlsRef.current.cameraDistance = Math.max(minDist, Math.min(maxDist, controlsRef.current.cameraDistance))
       }
+      
+      updateCameraPosition()
     }
 
-    // Click handling with raycasting
+    // Click handling for object selection
     const onClick = (e: MouseEvent) => {
-      if (!renderer || !camera) return
+      if (controlsRef.current.isMouseDown) return // Ignore clicks that are part of drag
       
       const rect = renderer.domElement.getBoundingClientRect()
       mouse.current.x = ((e.clientX - rect.left) / rect.width) * 2 - 1
@@ -189,26 +259,22 @@ export default function OrbitCanvas({ sets, frameIndex, onPick, settings }: Orbi
       const intersects = raycaster.current.intersectObjects(meshes)
       
       if (intersects.length > 0) {
-        const clickedObject = intersects[0].object
-        const pickData = clickedObject.userData.pick as ClickInfo
-        if (pickData) {
-          console.log('🖱️ Clicked:', pickData.label)
-          onPick(pickData)
+        const hit = intersects[0].object as THREE.Mesh
+        if (hit.userData.pick) {
+          onPick(hit.userData.pick)
         }
       }
     }
 
-    // Window resize handler
+    // Window resize handling
     const onResize = () => {
-      if (!mount || !renderer || !camera) return
-      const width = mount.clientWidth
-      const height = mount.clientHeight
-      renderer.setSize(width, height)
-      camera.aspect = width / height
+      if (!mount) return
+      camera.aspect = mount.clientWidth / mount.clientHeight
       camera.updateProjectionMatrix()
+      renderer.setSize(mount.clientWidth, mount.clientHeight)
     }
 
-    // Event listeners
+    // Add event listeners
     renderer.domElement.addEventListener('mousedown', onMouseDown)
     window.addEventListener('mouseup', onMouseUp)
     window.addEventListener('mousemove', onMouseMove)
@@ -216,20 +282,32 @@ export default function OrbitCanvas({ sets, frameIndex, onPick, settings }: Orbi
     renderer.domElement.addEventListener('click', onClick)
     window.addEventListener('resize', onResize)
 
-    // Animation loop with smooth camera transitions
+    // Animation loop with smooth transitions
     const animate = () => {
-      // Handle smooth camera transitions
       if (controlsRef.current.isTransitioning) {
-        camera.position.lerp(controlsRef.current.targetPosition, 0.05)
-        const currentLookAt = new THREE.Vector3()
-        camera.getWorldDirection(currentLookAt)
-        currentLookAt.multiplyScalar(-1).add(camera.position)
-        currentLookAt.lerp(controlsRef.current.targetLookAt, 0.05)
-        camera.lookAt(currentLookAt)
+        controlsRef.current.transitionProgress += 0.05
         
-        // Check if transition is complete
-        if (camera.position.distanceTo(controlsRef.current.targetPosition) < 0.1) {
+        if (controlsRef.current.transitionProgress >= 1) {
+          // Transition complete
           controlsRef.current.isTransitioning = false
+          controlsRef.current.transitionProgress = 0
+          camera.position.copy(controlsRef.current.targetPosition)
+          camera.lookAt(controlsRef.current.targetLookAt)
+        } else {
+          // Interpolate position during transition
+          const progress = Math.min(controlsRef.current.transitionProgress, 1)
+          const easedProgress = 1 - Math.pow(1 - progress, 3) // Ease out cubic
+          
+          camera.position.lerpVectors(camera.position, controlsRef.current.targetPosition, easedProgress * 0.3)
+          
+          // Update look target
+          const lookTarget = new THREE.Vector3()
+          lookTarget.lerpVectors(
+            new THREE.Vector3(0, 0, 0), // Current look target (simplified)
+            controlsRef.current.targetLookAt,
+            easedProgress * 0.3
+          )
+          camera.lookAt(lookTarget)
         }
       }
       
@@ -238,7 +316,7 @@ export default function OrbitCanvas({ sets, frameIndex, onPick, settings }: Orbi
     }
     animationIdRef.current = requestAnimationFrame(animate)
 
-    console.log('✅ Basic setup complete')
+    console.log('✅ Enhanced camera system initialized')
 
     return () => {
       if (animationIdRef.current) {
@@ -260,7 +338,29 @@ export default function OrbitCanvas({ sets, frameIndex, onPick, settings }: Orbi
     }
   }, [])
 
-  // Add celestial objects when data is available
+  // Handle focus target changes with smooth transitions
+  useEffect(() => {
+    if (settings.followPlanet && cameraRef.current && objsRef.current[settings.followPlanet]) {
+      console.log(`🎯 Focusing on ${HORIZON_NAMES[settings.followPlanet] || settings.followPlanet}`)
+      
+      // Calculate new focus distance for this object
+      const newDistance = calculateFocusDistance(settings.followPlanet)
+      controlsRef.current.focusDistance = newDistance
+      
+      // Reset orbital angles for better initial view
+      controlsRef.current.focusTheta = Math.PI / 6  // Slightly angled view
+      controlsRef.current.focusPhi = Math.PI / 3    // Good elevation angle
+      
+      // Trigger smooth transition
+      updateCameraPosition(true)
+    } else if (!settings.followPlanet) {
+      console.log('🎯 Returning to free camera mode')
+      controlsRef.current.focusTarget = null
+      updateCameraPosition(true)
+    }
+  }, [settings.followPlanet, settings.useRealisticScale, settings.useRealisticSizes])
+
+  // Rebuild objects when settings change (keep existing logic)
   useEffect(() => {
     const scene = sceneRef.current
     if (!scene || !sets.length) return
@@ -360,7 +460,7 @@ export default function OrbitCanvas({ sets, frameIndex, onPick, settings }: Orbi
       scene.remove(gridObj)
     }
     
-    const gridSize = settings.useRealisticScale ? 5 : 30
+    const gridSize = settings.useRealisticScale ? 100 : 30
     const grid = new THREE.GridHelper(gridSize, 20, 0x333344, 0x222233)
     grid.material.transparent = true
     grid.material.opacity = 0.4
@@ -369,7 +469,7 @@ export default function OrbitCanvas({ sets, frameIndex, onPick, settings }: Orbi
     console.log('✅ All objects added, scene has', scene.children.length, 'children')
   }, [sets, settings])
 
-  // Animate positions based on frameIndex
+  // Animate positions based on frameIndex (keep existing logic)
   useEffect(() => {
     if (!sets.length) return
 
@@ -404,30 +504,6 @@ export default function OrbitCanvas({ sets, frameIndex, onPick, settings }: Orbi
     })
   }, [frameIndex, sets, settings])
 
-  // Handle camera transitions when following planet changes
-  useEffect(() => {
-    if (settings.followPlanet && cameraRef.current) {
-      const controls = controlsRef.current
-      if (objsRef.current[settings.followPlanet]) {
-        const target = objsRef.current[settings.followPlanet]
-        const targetPos = target.position.clone()
-        
-        // Calculate appropriate distance based on object and scale
-        let followDistance = 10
-        if (settings.followPlanet === '10') { // Sun
-          followDistance = settings.useRealisticSizes ? 0.5 : 8
-        } else {
-          followDistance = settings.useRealisticScale ? 2 : 6
-        }
-        
-        const offset = new THREE.Vector3(0, followDistance * 0.3, followDistance)
-        controls.targetPosition.copy(targetPos).add(offset)
-        controls.targetLookAt.copy(targetPos)
-        controls.isTransitioning = true
-      }
-    }
-  }, [settings.followPlanet, settings.useRealisticScale, settings.useRealisticSizes])
-
   return (
     <div 
       ref={mountRef} 
@@ -435,12 +511,13 @@ export default function OrbitCanvas({ sets, frameIndex, onPick, settings }: Orbi
         width: '100%', 
         height: '100%',
         background: '#0b0f16',
-        cursor: 'grab'
+        cursor: settings.followPlanet ? 'grab' : 'grab'
       }}
     />
   )
 }
 
+// Constants (same as original)
 const HORIZON_NAMES: Record<string, string> = {
   '199': 'Mercury', '299': 'Venus', '399': 'Earth', '499': 'Mars',
   '599': 'Jupiter', '699': 'Saturn', '799': 'Uranus', '899': 'Neptune'
