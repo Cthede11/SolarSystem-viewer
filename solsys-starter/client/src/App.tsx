@@ -1,306 +1,403 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useState } from 'react'
+import { getEphem } from './lib/api'
+import type { EphemSet } from './lib/api'
+import type { ViewSettings, ClickInfo } from './types'
+import OrbitCanvas from './components/OrbitCanvas'
+import InfoDrawer from './components/InfoDrawer'
+import TimeControls from './components/TimeControls'
+import SettingsMenu from './components/SettingsMenu'
+import PlanetDirectory from './components/PlanetDirectory'
+import ErrorBoundary from './components/ErrorBoundary'
+import DebugViewer from './components/DebugViewer' // Import the debug component
+import './styles.css'
 
-type DetailsEvent = { id: string | null }
+export default function App() {
+  // Debug mode toggle
+  const [debugMode, setDebugMode] = useState(false)
+  const [frameDebugMode, setFrameDebugMode] = useState(false)
+  const [visibilityTestMode, setVisibilityTestMode] = useState(false)
+  
+  const [sets, setSets] = useState<EphemSet[]>([])
+  const [frameIndex, setFrameIndex] = useState(0)
+  const [maxFrames, setMaxFrames] = useState(0)
+  const [playing, setPlaying] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string>()
+  const [selectedInfo, setSelectedInfo] = useState<{id: string, label: string, kind: 'star' | 'planet', extra?: any} | null>(null)
+  const [showSettings, setShowSettings] = useState(false)
+  const [timeRange, setTimeRange] = useState('30days')
+  const [animationSpeed, setAnimationSpeed] = useState(1)
+  const [selectedPlanet, setSelectedPlanet] = useState<string | null>(null)
 
-type PlanetCard = {
-  id: string
-  name: string
-  kind: 'star' | 'planet'
-  color: string
-  description: string
-  stats: Record<string, string>
-  facts: string[]
-  horizonsId: string
-}
+  const [settings, setSettings] = useState<ViewSettings>({
+    useRealisticScale: false,
+    useRealisticSizes: false,
+    showOrbits: true,
+    followPlanet: null
+  })
 
-const DB: Record<string, PlanetCard> = {
-  '10': {
-    id: '10',
-    name: 'Sun',
-    kind: 'star',
-    color: '#ffdd44',
-    description:
-      'The Sun is the star at the center of our Solar System. A nearly perfect sphere of hot plasma powered by nuclear fusion.',
-    stats: {
-      mass: '1.989 × 10³⁰ kg',
-      surfaceTemp: '5,505°C',
-      radius: '696,340 km',
-    },
-    facts: [
-      '99.86% of Solar System mass',
-      'Light → Earth: ~8 min',
-      'Core temp ~15M °C',
-    ],
-    horizonsId: '10',
-  },
-  '199': {
-    id: '199',
-    name: 'Mercury',
-    kind: 'planet',
-    color: '#8c7853',
-    description:
-      'Smallest planet and closest to the Sun. Extreme temperature swing and a cratered surface.',
-    stats: {
-      mass: '3.285 × 10²³ kg',
-      dayLength: '59 Earth days',
-      orbitalPeriod: '88 days',
-    },
-    facts: ['No moons', 'Day longer than year', 'Heavily cratered'],
-    horizonsId: '199',
-  },
-  '299': {
-    id: '299',
-    name: 'Venus',
-    kind: 'planet',
-    color: '#ffcc33',
-    description:
-      'Second planet from the Sun. Dense CO₂ atmosphere traps heat, making it the hottest planet.',
-    stats: {
-      mass: '4.867 × 10²⁴ kg',
-      dayLength: '243 Earth days',
-      orbitalPeriod: '225 days',
-    },
-    facts: ['Retrograde rotation', 'Thick clouds', 'Hottest surface'],
-    horizonsId: '299',
-  },
-  '399': {
-    id: '399',
-    name: 'Earth',
-    kind: 'planet',
-    color: '#6ec6ff',
-    description:
-      'Our home world. Liquid water, protective atmosphere, and a thriving biosphere.',
-    stats: {
-      mass: '5.972 × 10²⁴ kg',
-      gravity: '9.807 m/s²',
-      dayLength: '24 hours',
-    },
-    facts: ['71% water', 'One natural satellite (Moon)'],
-    horizonsId: '399',
-  },
-  '499': {
-    id: '499',
-    name: 'Mars',
-    kind: 'planet',
-    color: '#ff785a',
-    description:
-      'A cold desert world with the largest volcano in the Solar System (Olympus Mons).',
-    stats: {
-      mass: '6.39 × 10²³ kg',
-      dayLength: '24h 37m',
-      orbitalPeriod: '687 days',
-    },
-    facts: ['Two small moons', 'Ancient water signs'],
-    horizonsId: '499',
-  },
-  '599': {
-    id: '599',
-    name: 'Jupiter',
-    kind: 'planet',
-    color: '#d8ca9d',
-    description:
-      'The largest planet. Powerful magnetic field and the Great Red Spot storm.',
-    stats: { mass: '1.898 × 10²⁷ kg', dayLength: '9h 56m' },
-    facts: ['>95 moons', 'Massive magnetosphere'],
-    horizonsId: '599',
-  },
-  '699': {
-    id: '699',
-    name: 'Saturn',
-    kind: 'planet',
-    color: '#fad5a5',
-    description: 'Gas giant famous for its rings.',
-    stats: { mass: '5.683 × 10²⁶ kg', orbitalPeriod: '29 years' },
-    facts: ['Rings are billions of particles', 'Moon Titan has thick atmosphere'],
-    horizonsId: '699',
-  },
-  '799': {
-    id: '799',
-    name: 'Uranus',
-    kind: 'planet',
-    color: '#4fd0e4',
-    description: 'Ice giant tipped on its side (axial tilt ~98°).',
-    stats: { dayLength: '17h 14m', orbitalPeriod: '84 years' },
-    facts: ['Faint rings', 'Methane-rich atmosphere'],
-    horizonsId: '799',
-  },
-  '899': {
-    id: '899',
-    name: 'Neptune',
-    kind: 'planet',
-    color: '#4b70dd',
-    description: 'Farthest planet with the strongest winds in the Solar System.',
-    stats: { dayLength: '16h 6m', orbitalPeriod: '165 years' },
-    facts: ['Dark Spot storms', 'Moon Triton likely captured'],
-    horizonsId: '899',
-  },
-}
-
-// Optional props kept for compatibility with existing imports.
-// They’re ignored for opening/closing behavior; we drive that via events.
-type Props = {
-  selectedPlanet?: string | null
-  onClose?: () => void
-}
-
-export default function InfoDrawer({ onClose }: Props) {
-  // Open only via app:showDetails; not on selection/focus.
-  const [open, setOpen] = useState(false)
-  const [id, setId] = useState<string | null>(null)
-  const card = useMemo(() => (id ? DB[id] : null), [id])
-
+  // Load ephemeris data
   useEffect(() => {
-    const onShow = (e: Event) => {
-      const ce = e as CustomEvent<DetailsEvent>
-      const next = ce.detail?.id || null
-      if (next && DB[next]) {
-        setId(next)
-        setOpen(true)
+    const loadData = async () => {
+      try {
+        setLoading(true)
+        setError(undefined)
+        
+        const now = new Date()
+        const start = now.toISOString().split('T')[0]
+        const futureDate = new Date(now)
+        
+        // Set date range based on timeRange
+        switch (timeRange) {
+          case '7days':
+            futureDate.setDate(now.getDate() + 7)
+            break
+          case '10days':
+            futureDate.setDate(now.getDate() + 10)
+            break
+          case '30days':
+            futureDate.setDate(now.getDate() + 30)
+            break
+          case '90days':
+            futureDate.setDate(now.getDate() + 90)
+            break
+          case '365days':
+            futureDate.setFullYear(now.getFullYear() + 1)
+            break
+          default:
+            futureDate.setDate(now.getDate() + 30)
+        }
+        
+        const stop = futureDate.toISOString().split('T')[0]
+        
+        // Get step size based on range
+        const stepSize = timeRange === '7days' ? '4 h' : 
+                        timeRange === '10days' ? '6 h' :
+                        timeRange === '30days' ? '12 h' :
+                        timeRange === '90days' ? '1 d' : '3 d'
+        
+        console.log(`Loading ephemeris data: ${start} to ${stop}, step: ${stepSize}`)
+        
+        const result = await getEphem(['10', '199', '299', '399', '499'], start, stop, stepSize)
+        
+        console.log('Loaded ephemeris sets:', result)
+        setSets(result)
+        
+        const maxLen = Math.max(...result.map(s => s.states?.length || 0))
+        setMaxFrames(maxLen - 1)
+        setFrameIndex(0)
+        
+      } catch (err) {
+        console.error('Failed to load ephemeris data:', err)
+        setError(`Failed to load data: ${err}`)
+      } finally {
+        setLoading(false)
       }
     }
-    const onHide = () => setOpen(false)
 
-    window.addEventListener('app:showDetails', onShow)
-    window.addEventListener('app:hideDetails', onHide)
-    return () => {
-      window.removeEventListener('app:showDetails', onShow)
-      window.removeEventListener('app:hideDetails', onHide)
-    }
-  }, [])
+    loadData()
+  }, [timeRange])
 
-  const close = () => {
-    setOpen(false)
-    onClose?.()
+  // Animation loop
+  useEffect(() => {
+    if (!playing || maxFrames === 0) return
+    
+    const interval = setInterval(() => {
+      setFrameIndex(prev => {
+        const next = prev + (0.5 * animationSpeed)
+        return next >= maxFrames ? 0 : next
+      })
+    }, 50)
+    
+    return () => clearInterval(interval)
+  }, [playing, maxFrames, animationSpeed])
+
+  const getCurrentDate = () => {
+    if (!sets.length || !sets[0].states?.length) return new Date().toISOString()
+    const currentFrame = Math.floor(frameIndex)
+    const state = sets[0].states[currentFrame]
+    return state?.t || new Date().toISOString()
   }
 
-  if (!open || !card) return null
+  const handlePick = (info: ClickInfo) => {
+    // Convert ClickInfo to Info type for InfoDrawer
+    const convertedInfo = {
+      id: info.id,
+      label: info.label,
+      kind: info.kind === 'star' ? 'star' as const : 'planet' as const, // Only allow star or planet
+      extra: {}
+    }
+    setSelectedInfo(convertedInfo)
+    setSelectedPlanet(info.id)
+  }
 
-  return (
-    <div
-      style={{
-        position: 'absolute',
-        left: '12px',
-        top: '80px',
-        width: '320px',
-        maxWidth: '90vw',
-        background: 'var(--panel, #0b1220)',
-        border: '1px solid var(--border, #1e2a3a)',
-        borderRadius: '14px',
-        boxShadow: '0 16px 32px rgba(0,0,0,0.45)',
-        color: 'var(--fg, #e6eefc)',
-        zIndex: 70,
-        overflow: 'hidden'
-      }}
-    >
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 10,
-          padding: '12px 14px',
-          borderBottom: '1px solid var(--border, #1e2a3a)',
-          background:
-            'linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0))'
-        }}
-      >
-        <div
-          style={{
-            width: 28,
-            height: 28,
-            borderRadius: 8,
-            background: card.color,
-            display: 'grid',
-            placeItems: 'center',
-            fontSize: 16
-          }}
-        >
-          {card.kind === 'star' ? '☀️' : '🪐'}
-        </div>
-        <div style={{ flex: 1 }}>
-          <div style={{ fontWeight: 700 }}>{card.name}</div>
-          <div style={{ fontSize: 12, opacity: 0.8 }}>
-            {card.kind.toUpperCase()} • Directory
-          </div>
-        </div>
-        <button
-          className="btn"
-          onClick={close}
-          title="Close"
-          style={{ padding: '4px 8px', fontSize: 12 }}
-        >
-          ✕
-        </button>
-      </div>
+  const handlePlanetSelect = (planetId: string) => {
+    setSelectedPlanet(planetId)
+    // Update settings to follow the selected planet
+    setSettings(prev => ({ ...prev, followPlanet: planetId }))
+  }
 
-      <div style={{ padding: 14, display: 'grid', gap: 10 }}>
-        <div
-          style={{
-            background: 'rgba(255,255,255,0.04)',
-            border: '1px solid var(--border, #1e2a3a)',
-            borderRadius: 8,
-            padding: '8px 10px',
-            fontSize: 12,
-          }}
-        >
-          <div style={{ opacity: 0.75, marginBottom: 4 }}>Horizons ID:</div>
-          <strong>{card.horizonsId}</strong>
-        </div>
 
-        <div>
-          <div style={{ fontWeight: 700, marginBottom: 6 }}>Description</div>
-          <div style={{ fontSize: 14, lineHeight: 1.4 }}>{card.description}</div>
-        </div>
-
-        <div>
-          <div style={{ fontWeight: 700, marginBottom: 6 }}>Key Statistics</div>
-          <div
+  // If in debug mode, show only the debug viewer
+  if (debugMode) {
+    return (
+      <ErrorBoundary>
+        <div style={{ position: 'relative' }}>
+          <button
+            onClick={() => setDebugMode(false)}
             style={{
-              display: 'grid',
-              gridTemplateColumns: '1fr 1fr',
-              gap: 8
+              position: 'absolute',
+              top: '10px',
+              right: '10px',
+              zIndex: 2000,
+              padding: '10px 15px',
+              background: '#ff4444',
+              color: 'white',
+              border: 'none',
+              borderRadius: '5px',
+              cursor: 'pointer',
+              fontWeight: 'bold'
             }}
           >
-            {Object.entries(card.stats).map(([k, v]) => (
-              <div
-                key={k}
-                style={{
-                  background: 'rgba(255,255,255,0.04)',
-                  border: '1px solid var(--border, #1e2a3a)',
-                  borderRadius: 8,
-                  padding: '6px 8px',
-                  fontSize: 12
-                }}
-              >
-                <div style={{ opacity: 0.75, marginBottom: 4 }}>{k}</div>
-                <div style={{ fontWeight: 600 }}>{v}</div>
+            Exit Debug Mode
+          </button>
+          <DebugViewer />
+        </div>
+      </ErrorBoundary>
+    )
+  }
+
+  return (
+    <ErrorBoundary>
+      <div id="app">
+        {/* Header */}
+        <div className="header">
+          <div className="header-left">
+            <h1>🌌 Solar System Viewer</h1>
+          </div>
+          
+          {/* Time Controls in Header */}
+          {!loading && !error && (
+            <div className="header-center">
+              <div className="controls">
+                {/* Play/Pause */}
+                <button
+                  className="btn"
+                  onClick={() => setPlaying(!playing)}
+                  style={{ 
+                    padding: '6px 12px',
+                    fontSize: '13px',
+                    minWidth: '70px',
+                    background: playing ? '#ff6b6b' : '#4ecdc4'
+                  }}
+                >
+                  {playing ? '⏸️ Pause' : '▶️ Play'}
+                </button>
+
+                {/* Time Range Selector */}
+                <select
+                  className="btn"
+                  value={timeRange}
+                  onChange={(e) => setTimeRange(e.target.value)}
+                  style={{ 
+                    background: '#1b263b',
+                    color: 'var(--fg)',
+                    minWidth: '90px',
+                    fontSize: '12px'
+                  }}
+                >
+                  <option value="7days">7 Days</option>
+                  <option value="10days">10 Days</option>
+                  <option value="30days">30 Days</option>
+                  <option value="90days">90 Days</option>
+                  <option value="365days">1 Year</option>
+                </select>
+
+                {/* Speed Control */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <span style={{ fontSize: '11px', color: 'var(--muted)' }}>Speed:</span>
+                  <select
+                    className="btn"
+                    value={animationSpeed}
+                    onChange={(e) => setAnimationSpeed(parseFloat(e.target.value))}
+                    style={{ 
+                      background: '#1b263b',
+                      color: 'var(--fg)',
+                      fontSize: '11px',
+                      padding: '4px 6px',
+                      minWidth: '55px'
+                    }}
+                  >
+                    <option value={0.1}>0.1×</option>
+                    <option value={0.25}>0.25×</option>
+                    <option value={0.5}>0.5×</option>
+                    <option value={1}>1×</option>
+                    <option value={2}>2×</option>
+                    <option value={4}>4×</option>
+                    <option value={8}>8×</option>
+                  </select>
+                </div>
+
+                {/* Frame Info */}
+                <div style={{ 
+                  fontSize: '11px', 
+                  color: 'var(--muted)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  paddingLeft: '8px'
+                }}>
+                  <span>Frame: {Math.round(frameIndex)}/{maxFrames}</span>
+                  <span>•</span>
+                  <span>{new Date(getCurrentDate()).toLocaleDateString('en-US', {
+                    month: 'short',
+                    day: 'numeric',
+                    year: 'numeric'
+                  })}</span>
+                </div>
               </div>
-            ))}
+            </div>
+          )}
+
+          <div className="header-buttons">
+            <button 
+              className="btn" 
+              onClick={() => setVisibilityTestMode(true)}
+              style={{ background: '#00cc44', color: 'white' }}
+            >
+              🔍 Visibility Test
+            </button>
+            <button 
+              className="btn" 
+              onClick={() => setFrameDebugMode(true)}
+              style={{ background: '#ff9900', color: 'white' }}
+            >
+              🔧 Frame Debug
+            </button>
+            <button 
+              className="btn" 
+              onClick={() => setDebugMode(true)}
+              style={{ background: '#ff6b00', color: 'white' }}
+            >
+              🐛 Debug Mode
+            </button>
+            <button 
+              className="btn" 
+              onClick={() => setShowSettings(true)}
+            >
+              ⚙️ Settings
+            </button>
           </div>
         </div>
 
-        <div>
-          <div style={{ fontWeight: 700, marginBottom: 6 }}>Fast facts</div>
-          <ul style={{ margin: 0, paddingLeft: 18 }}>
-            {card.facts.map((f, i) => (
-              <li key={i} style={{ marginBottom: 4, fontSize: 13 }}>
-                {f}
-              </li>
-            ))}
-          </ul>
+        {/* Main Content */}
+        <div className="canvas-wrap">
+          {loading && (
+            <div style={{
+              position: 'absolute',
+              top: '50%',
+              left: '50%',
+              transform: 'translate(-50%, -50%)',
+              background: 'var(--panel)',
+              padding: '20px',
+              borderRadius: '12px',
+              border: '1px solid var(--border)',
+              zIndex: 100,
+              textAlign: 'center'
+            }}>
+              <div className="spinner" style={{ margin: '0 auto 10px' }} />
+              <div>Loading solar system data...</div>
+            </div>
+          )}
+
+          {error && (
+            <div style={{
+              position: 'absolute',
+              top: '50%',
+              left: '50%',
+              transform: 'translate(-50%, -50%)',
+              background: '#ff4444',
+              color: 'white',
+              padding: '20px',
+              borderRadius: '12px',
+              zIndex: 100,
+              textAlign: 'center',
+              maxWidth: '400px'
+            }}>
+              <h3>Error</h3>
+              <p>{error}</p>
+              <button 
+                className="btn" 
+                onClick={() => window.location.reload()}
+                style={{ background: 'white', color: '#ff4444' }}
+              >
+                Reload
+              </button>
+            </div>
+          )}
+
+          {!loading && !error && (
+            <>
+              <OrbitCanvas
+                sets={sets}
+                frameIndex={frameIndex}
+                onPick={handlePick}
+                settings={settings}
+              />
+              
+              <InfoDrawer
+                info={selectedInfo}
+                onClose={() => setSelectedInfo(null)}
+              />
+              
+              <PlanetDirectory
+                onSelectPlanet={handlePlanetSelect}
+                selectedPlanet={selectedPlanet}
+                settings={settings}
+              />
+              
+              {/* Timeline Slider at Bottom */}
+              <div style={{
+                position: 'absolute',
+                bottom: '12px',
+                left: '50%',
+                transform: 'translateX(-50%)',
+                background: 'var(--panel)',
+                border: '1px solid var(--border)',
+                borderRadius: '12px',
+                padding: '8px 16px',
+                zIndex: 60,
+                minWidth: '400px',
+                maxWidth: '90vw'
+              }}>
+                <div style={{ marginBottom: '4px', fontSize: '11px', color: 'var(--muted)', textAlign: 'center' }}>
+                  Timeline Scrubber
+                </div>
+                <input
+                  type="range"
+                  className="range"
+                  min={0}
+                  max={maxFrames || 0}
+                  step={0.1}
+                  value={frameIndex}
+                  onChange={(e) => setFrameIndex(parseFloat(e.target.value))}
+                  style={{ width: '100%' }}
+                />
+              </div>
+            </>
+          )}
         </div>
 
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button
-            className="btn"
-            onClick={() => window.dispatchEvent(new CustomEvent('app:select', { detail: { id } }))}
-          >
-            🎯 Focus
-          </button>
-          <button className="btn secondary-btn" onClick={close}>
-            Close
-          </button>
-        </div>
+        {/* Settings Modal */}
+        {showSettings && (
+          <SettingsMenu
+            settings={settings}
+            onSettingsChange={setSettings}
+            isOpen={showSettings}
+            onClose={() => setShowSettings(false)}
+          />
+        )}
       </div>
-    </div>
+    </ErrorBoundary>
   )
 }

@@ -1,8 +1,4 @@
-// Enhanced OrbitCanvas.tsx with improved camera focus and orbital controls
-// Fixes: initial focus-to-origin by seeding mesh positions immediately and
-//        falling back to computed position if a mesh is still at (0,0,0).
-
-import React, { useEffect, useRef } from 'react'
+import React, { useEffect, useRef, useCallback } from 'react'
 import * as THREE from 'three'
 import { positionAt } from '../lib/ephem'
 import type { EphemSet } from '../lib/api'
@@ -12,8 +8,10 @@ type SelectDetail = { id: string | null }
 const SELECT_EVENT = 'app:select'
 
 // Scale constants
-const VIEWING_SCALE = 1 / 50_000_000  // 1 unit = 50 million km (for visibility)
-const REALISTIC_SCALE = 1 / 149_597_870.7  // 1 unit = 1 AU (realistic distances)
+const VIEWING_SCALE = 1 / 50_000_000
+const REALISTIC_SCALE = 1 / 149_597_870.7
+const MAX_VIEWING_DISTANCE = 200
+const MAX_REALISTIC_DISTANCE = 50
 
 interface OrbitCanvasProps {
   sets: EphemSet[]
@@ -32,118 +30,38 @@ export default function OrbitCanvas({ sets, frameIndex, onPick, settings }: Orbi
   const animationIdRef = useRef<number>()
   const raycaster = useRef(new THREE.Raycaster())
   const mouse = useRef(new THREE.Vector2())
+  const isInitializedRef = useRef(false)
+  const lastSetsRef = useRef<EphemSet[]>([])
+  const lastSettingsRef = useRef<ViewSettings>()
 
-  // Enhanced camera controls with better state management
+  // Enhanced camera controls
   const controlsRef = useRef({
-    // Mouse interaction
     isMouseDown: false,
     lastMouseX: 0,
     lastMouseY: 0,
     mouseMoved: false,
     mouseButton: 0,
-    prevFocusTarget: null as string | null,
-
-    // Free camera mode
-    cameraDistance: 15,
+    cameraDistance: 8, // Reduced from 15
     cameraTheta: 0,
     cameraPhi: Math.PI / 4,
-
-    // Focus mode
     focusTarget: null as string | null,
-    focusDistance: 10,
+    focusDistance: 5, // Reduced from 10
     focusTheta: 0,
     focusPhi: Math.PI / 4,
-
-    // Auto orbit around focused object (gently)
     autoOrbitEnabled: true,
     autoOrbitTimer: 0,
-    focusLastUpdate: 0,
-
-    // Smooth transition
-    targetPosition: new THREE.Vector3(),
-    targetLookAt: new THREE.Vector3(),
-    currentLookAt: new THREE.Vector3(),
-    isTransitioning: false,
-    transitionProgress: 0,
-    transitionSpeed: 0.08
+    focusLastUpdate: 0
   })
 
-  // Convert spherical (r, theta, phi) to cartesian
-  const sphericalToCartesian = (r: number, theta: number, phi: number) =>
-    new THREE.Vector3(r * Math.sin(phi) * Math.cos(theta), r * Math.cos(phi), r * Math.sin(phi) * Math.sin(theta))
+  // Stable functions that won't change between renders
+  const sphericalToCartesian = useCallback((r: number, theta: number, phi: number) =>
+    new THREE.Vector3(
+      r * Math.sin(phi) * Math.cos(theta), 
+      r * Math.cos(phi), 
+      r * Math.sin(phi) * Math.sin(theta)
+    ), [])
 
-  // Calculate intelligent focus distance and angles
-  const calculateOptimalFocus = (objectId: string): { distance: number, theta: number, phi: number } => {
-    const obj = objsRef.current[objectId]
-    if (!obj) return { distance: 10, theta: 0, phi: Math.PI / 4 }
-
-    // Get object's visual radius
-    let objectRadius = 1
-    if ((obj as any).geometry instanceof THREE.SphereGeometry) {
-      objectRadius = ((obj as any).geometry.parameters?.radius) || 1
-    }
-
-    // Calculate base distance with conservative scaling
-    let baseDistance: number
-    if (objectId === '10') { // Sun
-      baseDistance = settings.useRealisticSizes ? Math.max(objectRadius * 6, 3) : Math.max(objectRadius * 4, 8)
-    } else {
-      if (settings.useRealisticScale && settings.useRealisticSizes) baseDistance = Math.max(objectRadius * 50, 2)
-      else if (settings.useRealisticScale)                          baseDistance = Math.max(objectRadius * 12, 2)
-      else                                                          baseDistance = Math.max(objectRadius * 6, 2)
-    }
-    baseDistance = Math.min(Math.max(baseDistance, 2), 150)
-
-    const phi = Math.PI / 3
-    let theta = 0
-
-    // Try to avoid nearest neighbors
-    const targetPos = obj.position.clone()
-    const nearby = Object.entries(objsRef.current)
-      .filter(([id]) => id !== objectId)
-      .map(([, o]) => ({ o, d: o.position.distanceTo(targetPos) }))
-      .sort((a, b) => a.d - b.d)
-
-    if (nearby.length > 0) {
-      const angles = [Math.PI/4, -Math.PI/4, Math.PI/2, -Math.PI/2, 3*Math.PI/4, -3*Math.PI/4, Math.PI, 0]
-      for (const a of angles) {
-        const testPos = sphericalToCartesian(baseDistance, a, phi).add(targetPos)
-        let clear = true
-        for (const n of nearby.slice(0, 2)) {
-          if (testPos.distanceTo(n.o.position) < baseDistance * 0.8) { clear = false; break }
-        }
-        if (clear) { theta = a; break }
-      }
-    }
-    return { distance: baseDistance, theta, phi }
-  }
-
-  // Helper: get (and if needed, compute) the position for an object by id
-  const getOrSeedObjectPosition = (id: string): THREE.Vector3 | null => {
-    const obj = objsRef.current[id]
-    if (!obj) return null
-
-    const pos = obj.position.clone()
-    const isZeroish = Math.abs(pos.x) + Math.abs(pos.y) + Math.abs(pos.z) < 1e-9
-    if (!isZeroish) return pos
-
-    // Seed from ephemerides immediately if available
-    const set = sets.find(s => s.id === id)
-    if (!set || !set.states?.length) return pos
-
-    try {
-      const scale = settings.useRealisticScale ? REALISTIC_SCALE : VIEWING_SCALE
-      const r = positionAt(set.states, frameIndex)
-      const seeded = new THREE.Vector3(r[0] * scale, r[1] * scale, r[2] * scale)
-      obj.position.copy(seeded)
-      return seeded.clone()
-    } catch {
-      return pos
-    }
-  }
-
-  // Update camera position based on current mode and controls
-  const updateCameraPosition = (immediate = false) => {
+  const updateCameraPosition = useCallback(() => {
     const camera = cameraRef.current
     if (!camera) return
 
@@ -152,189 +70,239 @@ export default function OrbitCanvas({ sets, frameIndex, onPick, settings }: Orbi
     let newLookAt = new THREE.Vector3()
 
     if (controls.focusTarget && objsRef.current[controls.focusTarget]) {
-      const seededPos = getOrSeedObjectPosition(controls.focusTarget) || new THREE.Vector3(0, 0, 0)
-      newLookAt.copy(seededPos)
+      const targetObj = objsRef.current[controls.focusTarget]
+      newLookAt.copy(targetObj.position)
       const relativePos = sphericalToCartesian(controls.focusDistance, controls.focusTheta, controls.focusPhi)
       newPosition = newLookAt.clone().add(relativePos)
-      if (!isFinite(newPosition.x) || !isFinite(newPosition.y) || !isFinite(newPosition.z)) {
-        newPosition = new THREE.Vector3(0, controls.focusDistance, 0)
-      }
     } else {
       newLookAt.set(0, 0, 0)
       newPosition = sphericalToCartesian(controls.cameraDistance, controls.cameraTheta, controls.cameraPhi)
     }
 
-    if (!controls.isTransitioning) {
-      controls.targetPosition.copy(newPosition)
-      controls.targetLookAt.copy(newLookAt)
-      controls.transitionProgress = 0
-      controls.isTransitioning = !immediate
-    } else {
-      controls.targetPosition.copy(newPosition)
-      controls.targetLookAt.copy(newLookAt)
-    }
+    camera.position.copy(newPosition)
+    camera.lookAt(newLookAt)
+  }, [sphericalToCartesian])
 
-    if (immediate || !controls.isTransitioning) {
-      camera.position.copy(newPosition)
-      camera.lookAt(newLookAt)
-      controls.currentLookAt.copy(newLookAt)
-      controls.isTransitioning = false
+  const focusOnObject = useCallback((objectId: string) => {
+    const obj = objsRef.current[objectId]
+    if (!obj) {
+      console.warn(`Cannot focus on ${objectId}: object not found`)
+      return
     }
-  }
-
-  // Enhanced focus function with intelligent positioning
-  const focusOnObject = (objectId: string, smooth = true) => {
-    if (!objsRef.current[objectId]) return
+    
+    console.log(`🎯 Focusing on ${objectId} at position:`, obj.position)
+    
     const controls = controlsRef.current
-    // Ensure target has a sane position before computing angles
-    getOrSeedObjectPosition(objectId)
-
-    const optimal = calculateOptimalFocus(objectId)
     controls.focusTarget = objectId
-    controls.focusDistance = optimal.distance
-    controls.focusTheta = optimal.theta
-    controls.focusPhi = optimal.phi
+    
+    const objDistance = obj.position.length()
+    let baseDistance: number
+    
+    if (objectId === '10') {
+      baseDistance = settings.useRealisticSizes ? Math.max(8, objDistance * 0.1) : 12
+    } else {
+      if (settings.useRealisticScale) {
+        baseDistance = Math.max(6, objDistance * 0.05)
+      } else {
+        baseDistance = 8
+      }
+    }
+    
+    controls.focusDistance = Math.min(Math.max(baseDistance, 3), 500)
+    controls.focusTheta = Math.PI / 4
+    controls.focusPhi = Math.PI / 3
     controls.focusLastUpdate = Date.now()
     controls.autoOrbitEnabled = false
-    controls.transitionProgress = 0
-    controls.isTransitioning = smooth
+    
+    console.log(`🎯 Focus distance set to: ${controls.focusDistance.toFixed(1)}`)
+    
+    updateCameraPosition()
+  }, [settings.useRealisticSizes, settings.useRealisticScale, updateCameraPosition])
 
-    // Use immediate placement on the very first frame to avoid visible jump,
-    // then allow smoothing to continue on subsequent frames.
-    updateCameraPosition(true)
-  }
-
+  // Initialize Three.js scene ONCE
   useEffect(() => {
+    if (isInitializedRef.current) return
+    
     const mount = mountRef.current
-    if (!mount) return
+    if (!mount) {
+      console.error('❌ Mount element not found')
+      return
+    }
+
+    console.log('🚀 INITIALIZING Three.js scene (should happen only once)')
+    console.log(`📐 Mount dimensions: ${mount.clientWidth}x${mount.clientHeight}`)
 
     // Scene
     const scene = new THREE.Scene()
     scene.background = new THREE.Color(0x0b0f16)
+    console.log('✅ Scene created')
 
-  // Camera
-  const camera = new THREE.PerspectiveCamera(75, mount.clientWidth / mount.clientHeight, 0.01, 1e9)
-  camera.position.set(0, 20, 40); // Default position: above and back from origin
-  camera.lookAt(0, 0, 0); // Look at origin (Sun)
-  cameraRef.current = camera
-  controlsRef.current.cameraDistance = settings.useRealisticScale ? 8 : 20
-  controlsRef.current.cameraTheta = 0;
-  controlsRef.current.cameraPhi = Math.PI / 4;
-  controlsRef.current.focusTarget = null;
-  updateCameraPosition(true)
+    // Camera - Position closer to the action
+    const camera = new THREE.PerspectiveCamera(
+      75, 
+      mount.clientWidth / mount.clientHeight, 
+      0.01, 
+      1e9
+    )
+    camera.position.set(0, 8, 15) // Much closer: was (0, 15, 30)
+    camera.lookAt(0, 0, 0)
+    cameraRef.current = camera
+    console.log('✅ Camera created and positioned closer')
 
     // Renderer
     const renderer = new THREE.WebGLRenderer({ antialias: true })
     renderer.setSize(mount.clientWidth, mount.clientHeight)
     renderer.shadowMap.enabled = true
-    mount.appendChild(renderer.domElement)
+    rendererRef.current = renderer
+    console.log('✅ Renderer created')
+
+    // Only add renderer if not already added
+    if (!mount.contains(renderer.domElement)) {
+      mount.appendChild(renderer.domElement)
+      console.log('✅ Renderer added to DOM')
+    }
 
     // Lights
-    const ambient = new THREE.AmbientLight(0xffffff, 0.6)
+    const ambient = new THREE.AmbientLight(0xffffff, 0.4)
     scene.add(ambient)
-    const sunLight = new THREE.PointLight(0xffffff, 2, 0)
+    
+    const sunLight = new THREE.PointLight(0xffffff, 1.5, 0)
     sunLight.position.set(0, 0, 0)
     sunLight.castShadow = true
-    sunLight.shadow.mapSize.width = 2048
-    sunLight.shadow.mapSize.height = 2048
     scene.add(sunLight)
+    console.log('✅ Lights added')
 
-    // Starfield
+    // Star skybox
+    const skyboxGeometry = new THREE.SphereGeometry(1000, 64, 32)
+    const skyboxMaterial = new THREE.MeshBasicMaterial({ 
+      color: 0x000011,
+      side: THREE.BackSide,
+      transparent: true,
+      opacity: 0.8
+    })
+    const skybox = new THREE.Mesh(skyboxGeometry, skyboxMaterial)
+    scene.add(skybox)
+    
     const starGeometry = new THREE.BufferGeometry()
-    const starMaterial = new THREE.PointsMaterial({ color: 0xffffff, size: 0.5 })
+    const starMaterial = new THREE.PointsMaterial({ 
+      color: 0xffffff, 
+      size: 1.5,
+      sizeAttenuation: false
+    })
     const starVertices: number[] = []
-    for (let i = 0; i < 8000; i++) {
-      starVertices.push((Math.random() - 0.5) * 2000, (Math.random() - 0.5) * 2000, (Math.random() - 0.5) * 2000)
+    const starCount = 3000
+    
+    for (let i = 0; i < starCount; i++) {
+      const radius = 900
+      const theta = Math.random() * Math.PI * 2
+      const phi = Math.acos(2 * Math.random() - 1)
+      
+      starVertices.push(
+        radius * Math.sin(phi) * Math.cos(theta),
+        radius * Math.sin(phi) * Math.sin(theta),
+        radius * Math.cos(phi)
+      )
     }
+    
     starGeometry.setAttribute('position', new THREE.Float32BufferAttribute(starVertices, 3))
     const stars = new THREE.Points(starGeometry, starMaterial)
     scene.add(stars)
+    console.log('✅ Star skybox added')
 
     sceneRef.current = scene
-    rendererRef.current = renderer
 
-    // Mouse controls
+    // Event handlers
     const onMouseDown = (e: MouseEvent) => {
-      const c = controlsRef.current;
-      c.isMouseDown = true;
-      c.mouseMoved = false;
-      c.lastMouseX = e.clientX;
-      c.lastMouseY = e.clientY;
-      c.autoOrbitEnabled = false;
-      c.mouseButton = e.button;
-      // Always enter free camera mode on right mouse down
+      const c = controlsRef.current
+      c.isMouseDown = true
+      c.mouseMoved = false
+      c.lastMouseX = e.clientX
+      c.lastMouseY = e.clientY
+      c.mouseButton = e.button
+      c.autoOrbitEnabled = false
+      
       if (e.button === 2) {
-        c.focusTarget = null;
-        updateCameraPosition(true);
+        c.focusTarget = null
+        updateCameraPosition()
       }
-    };
+    }
+
     const onMouseUp = () => {
-      const c = controlsRef.current;
-      c.isMouseDown = false;
-      // Do not restore focusTarget after right mouse drag; stay in free camera mode
-      if (c.focusTarget) setTimeout(() => { c.autoOrbitEnabled = true }, 2000);
-    };
-  // Prevent context menu on right-click
-  renderer.domElement.addEventListener('contextmenu', e => e.preventDefault());
+      const c = controlsRef.current
+      c.isMouseDown = false
+      if (c.focusTarget) {
+        setTimeout(() => { c.autoOrbitEnabled = true }, 2000)
+      }
+    }
+
     const onMouseMove = (e: MouseEvent) => {
       const c = controlsRef.current
       if (!c.isMouseDown) return
-      const dx = e.clientX - c.lastMouseX;
-      const dy = e.clientY - c.lastMouseY;
-      if (Math.abs(dx) > 5 || Math.abs(dy) > 5) c.mouseMoved = true;
+      
+      const dx = e.clientX - c.lastMouseX
+      const dy = e.clientY - c.lastMouseY
+      
+      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) c.mouseMoved = true
 
-      const sens = 0.008;
+      const sensitivity = 0.008
+      
       if (c.mouseButton === 0) {
         if (c.focusTarget && objsRef.current[c.focusTarget]) {
-          c.focusTheta -= dx * sens;
-          c.focusPhi = Math.max(0.1, Math.min(Math.PI - 0.1, c.focusPhi + dy * sens));
-          c.focusLastUpdate = Date.now();
+          c.focusTheta -= dx * sensitivity
+          c.focusPhi = Math.max(0.1, Math.min(Math.PI - 0.1, c.focusPhi + dy * sensitivity))
+          c.focusLastUpdate = Date.now()
         } else {
-          c.cameraTheta -= dx * sens;
-          c.cameraPhi = Math.max(0.1, Math.min(Math.PI - 0.1, c.cameraPhi + dy * sens));
+          c.cameraTheta -= dx * sensitivity
+          c.cameraPhi = Math.max(0.1, Math.min(Math.PI - 0.1, c.cameraPhi + dy * sensitivity))
         }
       }
-      c.lastMouseX = e.clientX;
-      c.lastMouseY = e.clientY;
-      updateCameraPosition(true);
+      
+      c.lastMouseX = e.clientX
+      c.lastMouseY = e.clientY
+      updateCameraPosition()
     }
+
     const onWheel = (e: WheelEvent) => {
       e.preventDefault()
       const c = controlsRef.current
-      const zoom = Math.pow(0.95, -e.deltaY * 0.1)
+      const zoom = Math.pow(0.95, -e.deltaY * 0.05)
+      
       if (c.focusTarget && objsRef.current[c.focusTarget]) {
         c.focusDistance = Math.min(Math.max(c.focusDistance * zoom, 1.5), 200)
       } else {
         c.cameraDistance = Math.min(Math.max(c.cameraDistance * zoom, 2), 300)
       }
-      updateCameraPosition(true)
+      updateCameraPosition()
     }
 
-    // Click → pick → focus + broadcast
     const onClick = (e: MouseEvent) => {
       const c = controlsRef.current
       if (c.mouseMoved) return
+      
       const rect = renderer.domElement.getBoundingClientRect()
       mouse.current.x = ((e.clientX - rect.left) / rect.width) * 2 - 1
       mouse.current.y = -((e.clientY - rect.top) / rect.height) * 2 + 1
-      raycaster.current.setFromCamera(mouse.current, cameraRef.current!)
+      
+      raycaster.current.setFromCamera(mouse.current, camera)
       const meshes = Object.values(objsRef.current).filter(o => o instanceof THREE.Mesh)
       const hits = raycaster.current.intersectObjects(meshes)
+      
       if (hits.length > 0) {
         const hit = hits[0].object as THREE.Mesh
         const tag = hit.userData?.pick as ClickInfo | undefined
         if (tag?.id) {
+          console.log('Clicked object:', tag)
           onPick(tag)
           window.dispatchEvent(new CustomEvent<SelectDetail>(SELECT_EVENT, { detail: { id: tag.id } }))
-          focusOnObject(tag.id, true)
+          focusOnObject(tag.id)
         }
       }
     }
 
-    // Keyboard
     const onKeyDown = (e: KeyboardEvent) => {
       const c = controlsRef.current
       const speed = 0.2
+      
       switch (e.code) {
         case 'KeyW': c.cameraPhi = Math.max(0.1, c.cameraPhi - speed); break
         case 'KeyS': c.cameraPhi = Math.min(Math.PI - 0.1, c.cameraPhi + speed); break
@@ -349,35 +317,54 @@ export default function OrbitCanvas({ sets, frameIndex, onPick, settings }: Orbi
           else c.cameraDistance = Math.min(300, c.cameraDistance * 1.1)
           break
         case 'Space':
+          e.preventDefault()
           c.focusTarget = null
           c.autoOrbitEnabled = false
-          c.isTransitioning = true
-          c.transitionProgress = 0
-          updateCameraPosition(false)
+          updateCameraPosition()
           break
       }
-      updateCameraPosition(true)
+      updateCameraPosition()
     }
 
     const onResize = () => {
-      const m = mountRef.current
-      const cam = cameraRef.current
-      const ren = rendererRef.current
-      if (!m || !cam || !ren) return
-      cam.aspect = m.clientWidth / m.clientHeight
-      cam.updateProjectionMatrix()
-      ren.setSize(m.clientWidth, m.clientHeight)
+      if (!mount || !camera || !renderer) return
+      camera.aspect = mount.clientWidth / mount.clientHeight
+      camera.updateProjectionMatrix()
+      renderer.setSize(mount.clientWidth, mount.clientHeight)
     }
 
-    // External select → focus
     const onExternalSelect = (e: Event) => {
       const ce = e as CustomEvent<SelectDetail>
       const id = ce.detail?.id
-      if (id && objsRef.current[id]) focusOnObject(id, true)
+      if (id && objsRef.current[id]) {
+        focusOnObject(id)
+      }
     }
 
-    // Listeners
+    // Animation loop
+    const animate = () => {
+      animationIdRef.current = requestAnimationFrame(animate)
+      
+      const camera = cameraRef.current
+      const renderer = rendererRef.current
+      const scene = sceneRef.current
+      
+      if (!camera || !renderer || !scene) return
+
+      const c = controlsRef.current
+      if (c.focusTarget && c.autoOrbitEnabled && !c.isMouseDown) {
+        if (Date.now() - c.focusLastUpdate > 3000) {
+          c.focusTheta += 0.003
+          updateCameraPosition()
+        }
+      }
+
+      renderer.render(scene, camera)
+    }
+
+    // Add event listeners
     renderer.domElement.addEventListener('mousedown', onMouseDown)
+    renderer.domElement.addEventListener('contextmenu', e => e.preventDefault())
     window.addEventListener('mouseup', onMouseUp)
     window.addEventListener('mousemove', onMouseMove)
     renderer.domElement.addEventListener('wheel', onWheel, { passive: false })
@@ -386,134 +373,290 @@ export default function OrbitCanvas({ sets, frameIndex, onPick, settings }: Orbi
     window.addEventListener('resize', onResize)
     window.addEventListener(SELECT_EVENT, onExternalSelect)
 
-    // Animate
-    const animate = () => {
-      const c = controlsRef.current
-      const camera = cameraRef.current
-      const renderer = rendererRef.current
-      const scene = sceneRef.current
-      if (!camera || !renderer || !scene) { animationIdRef.current = requestAnimationFrame(animate); return }
+    console.log('🚀 Starting animation loop')
+    animate()
 
-      if (c.isTransitioning) {
-        c.transitionProgress += c.transitionSpeed
-        if (c.transitionProgress >= 1) {
-          c.isTransitioning = false
-          c.transitionProgress = 0
-          camera.position.copy(c.targetPosition)
-          camera.lookAt(c.targetLookAt)
-          c.currentLookAt.copy(c.targetLookAt)
-        } else {
-          const p = c.transitionProgress
-          const eased = 1 - Math.pow(1 - p, 3)
-          camera.position.lerpVectors(camera.position, c.targetPosition, eased * 0.3)
-          c.currentLookAt.lerpVectors(c.currentLookAt, c.targetLookAt, eased * 0.3)
-          camera.lookAt(c.currentLookAt)
-        }
-      }
+    renderer.render(scene, camera)
+    console.log('✅ Initial render completed')
 
-      if (c.focusTarget && c.autoOrbitEnabled && !c.isMouseDown) {
-        if (Date.now() - c.focusLastUpdate > 2000) {
-          c.focusTheta += 0.002;
-          updateCameraPosition(true);
-        }
+    isInitializedRef.current = true
+
+    // Cleanup function
+    return () => {
+      console.log('🧹 Cleanup started')
+      
+      if (animationIdRef.current) {
+        cancelAnimationFrame(animationIdRef.current)
       }
+      
+      renderer.domElement.removeEventListener('mousedown', onMouseDown)
+      window.removeEventListener('mouseup', onMouseUp)
+      window.removeEventListener('mousemove', onMouseMove)
+      renderer.domElement.removeEventListener('wheel', onWheel)
+      renderer.domElement.removeEventListener('click', onClick)
+      window.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('resize', onResize)
+      window.removeEventListener(SELECT_EVENT, onExternalSelect)
+      
+      if (mount.contains(renderer.domElement)) {
+        mount.removeChild(renderer.domElement)
+      }
+      renderer.dispose()
+      
+      // Reset initialization flag
+      isInitializedRef.current = false
+      console.log('🧹 Cleanup completed')
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [settings.followPlanet]);
+  }, []) // No dependencies - initialize once only
 
-  // Rebuild objects when sets or settings change
+  // Update objects only when sets or relevant settings change
   useEffect(() => {
     const scene = sceneRef.current
-    const renderer = rendererRef.current
-    if (!scene || !renderer) return
+    if (!scene) {
+      console.log('⚠️ No scene available for object updates')
+      return
+    }
+
+    console.log('🔄 Checking if object update needed:', {
+      setsLength: sets.length,
+      hasLastSets: lastSetsRef.current.length > 0,
+      hasLastSettings: !!lastSettingsRef.current
+    })
+
+    // Always update if we have sets but no objects created yet
+    const hasObjects = Object.keys(objsRef.current).length > 0
+    const forceUpdate = sets.length > 0 && !hasObjects
+
+    // Check if we need to update objects
+    const setsChanged = JSON.stringify(sets) !== JSON.stringify(lastSetsRef.current)
+    const settingsChanged = !lastSettingsRef.current || 
+      lastSettingsRef.current.useRealisticScale !== settings.useRealisticScale ||
+      lastSettingsRef.current.useRealisticSizes !== settings.useRealisticSizes ||
+      lastSettingsRef.current.showOrbits !== settings.showOrbits
+
+    if (!setsChanged && !settingsChanged && !forceUpdate) {
+      console.log('⚠️ No changes detected and objects exist, skipping object update')
+      return // No need to rebuild
+    }
+
+    console.log('🔄 Updating objects:', { 
+      setsChanged, 
+      settingsChanged,
+      forceUpdate,
+      setsLength: sets.length,
+      firstSetId: sets[0]?.id,
+      firstSetStates: sets[0]?.states?.length
+    })
 
     const scale = settings.useRealisticScale ? REALISTIC_SCALE : VIEWING_SCALE
+    console.log(`📏 Using scale: ${scale.toExponential(2)}`)
 
-    // Clear previous (keep lights/stars)
+    // Clear previous objects
     Object.values(objsRef.current).forEach(o => scene.remove(o))
     Object.values(orbitLinesRef.current).forEach(l => scene.remove(l))
     objsRef.current = {}
     orbitLinesRef.current = {}
 
-    // Sun
-  const sunSize = settings.useRealisticSizes ? Math.max(2.0, 696_340 * scale) : 4.5 // Ensure Sun is always visible
+    if (!sets.length) {
+      console.log('⚠️ No sets available, skipping object creation')
+      return
+    }
+
+    // Create Sun - MAKE IT BIGGER TOO!
+    const sunSize = settings.useRealisticSizes ? Math.max(2.0, 696_340 * scale) : 6.0 // Increased from 3.0 to 6.0
+    console.log(`☀️ Creating sun with size: ${sunSize.toFixed(2)}`)
+    
     const sunGeo = new THREE.SphereGeometry(sunSize, 32, 16)
-    const sunMat = new THREE.MeshStandardMaterial({ color: 0xffd27d, emissive: 0x996611, emissiveIntensity: 0.5 })
+    const sunMat = new THREE.MeshStandardMaterial({ 
+      color: 0xffd27d, 
+      emissive: 0x996611, 
+      emissiveIntensity: 0.3 
+    })
     const sunMesh = new THREE.Mesh(sunGeo, sunMat)
     sunMesh.userData.pick = { id: '10', label: 'Sun', kind: 'star' }
+    sunMesh.position.set(0, 0, 0) // Keep sun at origin
     scene.add(sunMesh)
     objsRef.current['10'] = sunMesh
+    console.log('✅ Sun created at origin')
 
-    // Ecliptic grid
+    // Create grid
     const grid = new THREE.GridHelper(200, 20, 0x233048, 0x182238)
-    ;(grid.material as THREE.Material).opacity = 0.4
+    ;(grid.material as THREE.Material).opacity = 0.3
     ;(grid.material as THREE.Material as any).transparent = true
     scene.add(grid)
+    console.log('✅ Grid created')
 
-    // Planets + orbits
+    // Create planets
+    let planetsCreated = 0
     sets.forEach(set => {
-      if (!set.states || set.states.length === 0) return
+      if (set.id === '10') {
+        console.log(`⚠️ Skipping ${set.id}: is sun`)
+        return
+      }
+      
+      if (!set.states || set.states.length === 0) {
+        console.log(`⚠️ Skipping ${set.id}: no states (${set.states?.length || 0} states)`)
+        return
+      }
 
-      const pts = set.states.map(s => new THREE.Vector3(s.r[0] * scale, s.r[1] * scale, s.r[2] * scale))
-      const pathGeo = new THREE.BufferGeometry().setFromPoints(pts)
-      const pathMat = new THREE.LineBasicMaterial({ color: PLANET_DATA[set.id]?.orbitColor || 0x233048 })
-      const line = new THREE.Line(pathGeo, pathMat)
-      scene.add(line)
-      orbitLinesRef.current[set.id] = line
+      console.log(`🪐 Creating planet ${set.id} with ${set.states.length} states`)
 
-      // Mesh
+      // Create orbit line
+      if (settings.showOrbits) {
+        try {
+          const points = set.states.map(s => 
+            new THREE.Vector3(s.r[0] * scale, s.r[1] * scale, s.r[2] * scale)
+          )
+          const pathGeo = new THREE.BufferGeometry().setFromPoints(points)
+          const pathMat = new THREE.LineBasicMaterial({ 
+            color: PLANET_DATA[set.id]?.orbitColor || 0x233048,
+            opacity: 0.6,
+            transparent: true
+          })
+          const line = new THREE.Line(pathGeo, pathMat)
+          scene.add(line)
+          orbitLinesRef.current[set.id] = line
+          console.log(`✅ Orbit line created for ${set.id}`)
+        } catch (error) {
+          console.warn(`❌ Failed to create orbit line for ${set.id}:`, error)
+        }
+      }
+
+      // Create planet mesh - MAKE THEM MUCH BIGGER!
       let size: number
       if (settings.useRealisticSizes) {
-        size = Math.max(0.02, (REAL_SIZES[set.id] || 6371) * scale)
+        size = Math.max(0.1, (REAL_SIZES[set.id] || 6371) * scale)
       } else {
+        // Make planets much more visible
         const base = PLANET_DATA[set.id]?.size ?? 0.8
-        size = Math.max(0.15, Math.min(2.0, base * 0.4))
+        size = Math.max(0.5, base * 1.2) // Increased from 0.3 multiplier to 1.2
       }
-      const geo = new THREE.SphereGeometry(size, 24, 16)
-      const mat = new THREE.MeshStandardMaterial({ color: PLANET_DATA[set.id]?.color || 0x9999ff, roughness: 0.7, metalness: 0.1 })
-      const mesh = new THREE.Mesh(geo, mat)
-      mesh.userData.pick = { id: set.id, label: HORIZON_NAMES[set.id] || set.id, kind: 'planet' }
 
-      // ✅ Seed position immediately to avoid origin targeting
+      console.log(`🪐 Planet ${set.id} size: ${size.toFixed(3)}`)
+
+      const geo = new THREE.SphereGeometry(size, 24, 16)
+      const mat = new THREE.MeshStandardMaterial({ 
+        color: PLANET_DATA[set.id]?.color || 0x9999ff,
+        roughness: 0.7,
+        metalness: 0.1 
+      })
+      const mesh = new THREE.Mesh(geo, mat)
+      mesh.userData.pick = { 
+        id: set.id, 
+        label: HORIZON_NAMES[set.id] || set.id, 
+        kind: 'planet' 
+      }
+
+      // Set initial position using frameIndex
       try {
         const r = positionAt(set.states, frameIndex)
-        mesh.position.set(r[0] * scale, r[1] * scale, r[2] * scale)
-      } catch {
-        // leave at 0 if anything goes wrong; focusOnObject will seed later
+        if (r && r.every(Number.isFinite)) {
+          const newPos = [r[0] * scale, r[1] * scale, r[2] * scale]
+          mesh.position.set(newPos[0], newPos[1], newPos[2])
+          console.log(`✅ Planet ${set.id} positioned at [${newPos.map(v => v.toFixed(1)).join(',')}], size: ${size.toFixed(3)}`)
+        } else {
+          console.warn(`⚠️ Invalid position for ${set.id}, keeping at origin:`, r)
+        }
+      } catch (error) {
+        console.warn(`❌ Failed to position ${set.id}:`, error)
       }
 
       scene.add(mesh)
       objsRef.current[set.id] = mesh
+      planetsCreated++
+      console.log(`✅ Planet ${set.id} added to scene`)
     })
 
-    // Ensure camera updates after objects exist
-    updateCameraPosition(true)
-  }, [sets, settings, frameIndex])
+    // Store current state
+    lastSetsRef.current = [...sets] // Create new array to avoid reference issues
+    lastSettingsRef.current = { ...settings }
 
-  // Animate positions per frame (kept)
+    console.log(`✅ Objects updated: ${planetsCreated} planets + 1 sun + grid`)
+    console.log(`📊 Scene children count: ${scene.children.length}`)
+    console.log(`📊 Tracked objects: ${Object.keys(objsRef.current).length}`)
+    
+    // Check camera distance to objects
+    const camera = cameraRef.current
+    if (camera && planetsCreated > 0) {
+      const cameraPos = camera.position
+      console.log(`📹 Camera at: [${cameraPos.x.toFixed(1)}, ${cameraPos.y.toFixed(1)}, ${cameraPos.z.toFixed(1)}]`)
+      
+      Object.entries(objsRef.current).forEach(([id, obj]) => {
+        const distance = camera.position.distanceTo(obj.position)
+        console.log(`👁️ Distance to ${id}: ${distance.toFixed(1)}`)
+      })
+    }
+    
+  }, [sets, settings.useRealisticScale, settings.useRealisticSizes, settings.showOrbits, frameIndex]) // Add frameIndex for initial positioning
+
+  // Update positions when frame changes
   useEffect(() => {
-    if (!sets.length) return
-    const objs = objsRef.current
-    const scale = settings.useRealisticScale ? REALISTIC_SCALE : VIEWING_SCALE
+    if (!sets.length || Object.keys(objsRef.current).length === 0) {
+      console.log('⚠️ No sets or objects available for position update')
+      return
+    }
 
+    const scale = settings.useRealisticScale ? REALISTIC_SCALE : VIEWING_SCALE
+    
+    console.log(`🔄 Updating positions for frame ${frameIndex.toFixed(2)}, scale: ${scale.toExponential(2)}`)
+    
+    let updatedCount = 0
     sets.forEach(set => {
-      const mesh = objs[set.id] as THREE.Mesh
-      if (!mesh || !set.states?.length) return
+      const mesh = objsRef.current[set.id] as THREE.Mesh
+      if (!mesh) {
+        console.warn(`⚠️ No mesh found for ${set.id}`)
+        return
+      }
+      
+      if (!set.states?.length) {
+        console.warn(`⚠️ No states for ${set.id}`)
+        return
+      }
+
       try {
         const r = positionAt(set.states, frameIndex)
         if (r && r.every(Number.isFinite)) {
-          mesh.position.set(r[0] * scale, r[1] * scale, r[2] * scale)
+          const oldPos = mesh.position.clone()
+          const newPos = [r[0] * scale, r[1] * scale, r[2] * scale]
+          
+          // Apply safety limits
+          const distanceFromOrigin = Math.sqrt(newPos[0]**2 + newPos[1]**2 + newPos[2]**2)
+          const maxDistance = settings.useRealisticScale ? MAX_REALISTIC_DISTANCE : MAX_VIEWING_DISTANCE
+          
+          if (distanceFromOrigin > maxDistance) {
+            const scaleFactor = maxDistance / distanceFromOrigin
+            newPos[0] *= scaleFactor
+            newPos[1] *= scaleFactor
+            newPos[2] *= scaleFactor
+            console.warn(`⚠️ ${set.id} clamped from ${distanceFromOrigin.toFixed(1)} to ${maxDistance} units`)
+          }
+          
+          mesh.position.set(newPos[0], newPos[1], newPos[2])
+          
+          const distance = oldPos.distanceTo(mesh.position)
+          const finalDistance = Math.sqrt(newPos[0]**2 + newPos[1]**2 + newPos[2]**2)
+          
+          // Debug logging
+          if (frameIndex % 10 === 0 || distance > 10) {
+            console.log(`📍 ${set.id}: pos=[${newPos.map(v => v.toFixed(1)).join(',')}], dist=${finalDistance.toFixed(1)}, moved=${distance.toFixed(2)}`)
+          }
+          
+          updatedCount++
+        } else {
+          console.warn(`❌ Invalid raw position for ${set.id}:`, r)
         }
-      } catch {}
+      } catch (error) {
+        console.error(`❌ Position error for ${set.id}:`, error)
+      }
     })
-  }, [frameIndex, sets, settings])
+    
+    console.log(`✅ Updated ${updatedCount} object positions`)
+  }, [frameIndex, sets, settings.useRealisticScale])
 
-  return <div ref={mountRef} className="canvas-wrap" />
+  return <div ref={mountRef} className="canvas-wrap" style={{ width: '100%', height: '100%' }} />
 }
 
 // Planet metadata
-type PlanetData = { size: number; color: number; orbitColor: number }
-
 const HORIZON_NAMES: Record<string, string> = {
   '10': 'Sun',
   '199': 'Mercury',
@@ -526,7 +669,6 @@ const HORIZON_NAMES: Record<string, string> = {
   '899': 'Neptune'
 }
 
-// Real radii in km
 const REAL_SIZES: Record<string, number> = {
   '10': 696_340,
   '199': 2440,
@@ -539,7 +681,7 @@ const REAL_SIZES: Record<string, number> = {
   '899': 24622
 }
 
-const PLANET_DATA: Record<string, PlanetData> = {
+const PLANET_DATA: Record<string, { size: number; color: number; orbitColor: number }> = {
   '199': { size: 1.0, color: 0x8c7853, orbitColor: 0x8c7853 },
   '299': { size: 1.5, color: 0xffcc33, orbitColor: 0xffcc33 },
   '399': { size: 1.5, color: 0x6ec6ff, orbitColor: 0x6ec6ff },
