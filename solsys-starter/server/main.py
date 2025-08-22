@@ -3,8 +3,13 @@ from fastapi.middleware.cors import CORSMiddleware
 import httpx, re, time, math
 from typing import List, Dict, Any
 from datetime import datetime, timedelta
+import os
+from dotenv import load_dotenv
 
-app = FastAPI(title="Solar System Viewer API", version="0.1.1")
+# Load environment variables for API keys
+load_dotenv()
+
+app = FastAPI(title="Solar System Viewer API", version="0.2.0")
 
 # Allow local dev clients
 app.add_middleware(
@@ -15,9 +20,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# NASA API endpoints
 HORIZONS = "https://ssd-api.jpl.nasa.gov/horizons.api"
 SBDB_QUERY = "https://ssd-api.jpl.nasa.gov/sbdb_query.api"
 SBDB_BULK = "https://ssd-api.jpl.nasa.gov/sbdb.api"
+APOD_API = "https://api.nasa.gov/planetary/apod"
+EXOPLANET_API = "https://exoplanetarchive.ipac.caltech.edu/TAP/sync"
+MARS_ROVER_API = "https://api.nasa.gov/mars-photos/api/v1"
+SPACE_WEATHER_API = "https://api.nasa.gov/DONKI/WS"
+ASTEROID_WATCH_API = "https://api.nasa.gov/neo/rest/v1"
+
+# API Keys
+NASA_API_KEY = os.getenv("NASA_API_KEY", "DEMO_KEY")  # Get from https://api.nasa.gov/
+EXOPLANET_API_KEY = os.getenv("EXOPLANET_API_KEY", "")
 
 CACHE_TTL = 6 * 3600  # 6 hours
 _cache: Dict[str, Dict[str, Any]] = {}
@@ -265,6 +280,13 @@ async def fetch_horizons_vectors(command: str, start: str, stop: str, step: str,
     states = generate_orbital_positions(command, start, stop, step)
     return {"id": command, "center": center, "states": states}
 
+# ---- Health Check ----
+@app.get("/health")
+async def health_check():
+    """Simple health check endpoint"""
+    return {"status": "healthy", "timestamp": datetime.now().isoformat()}
+
+# ---- Core Ephemeris Endpoint ----
 @app.get("/api/ephem")
 async def ephem(
     horizons_ids: str = Query(..., description="Comma-separated Horizons COMMAND ids, e.g., '399,499'"),
@@ -294,23 +316,92 @@ async def ephem(
 
 # ---- SBDB endpoints ----
 @app.get("/api/sbdb/neo")
-async def sbdb_neo(limit: int = 50):
+async def sbdb_neo(limit: int = 100):
+    """Get Near-Earth Objects with enhanced data"""
     try:
         params = {
-            "neo": "Y",
+            "query": "neo=Y",
             "limit": str(limit),
-            "fields": "full_name,des,orbit_class,albedo,diameter,H,moid_au,pha"
+            "fields": "full_name,des,orbit_class,albedo,diameter,H,moid_au,pha,period_yr,semimajor_au,eccentricity,inclination,arg_perihelion,long_asc_node,mean_anomaly,epoch_mjd"
         }
         async with httpx.AsyncClient(timeout=60) as x:
             r = await x.get(SBDB_QUERY, params=params)
-            r.raise_for_status()
-            return r.json()
+            if r.status_code == 200:
+                return r.json()
+            else:
+                # Return fallback data instead of crashing
+                return {
+                    "count": 0,
+                    "data": [],
+                    "error": f"SBDB API returned {r.status_code}: {r.text[:200]}"
+                }
     except Exception as e:
-        # Return empty result if SBDB is unavailable
-        return {"count": 0, "data": []}
+        # Return fallback data instead of crashing
+        return {
+            "count": 0,
+            "data": [],
+            "error": f"Failed to fetch NEO data: {str(e)}"
+        }
+
+@app.get("/api/sbdb/comets")
+async def sbdb_comets(limit: int = 50):
+    """Get comet data"""
+    try:
+        params = {
+            "query": "comet=Y",
+            "limit": str(limit),
+            "fields": "full_name,des,orbit_class,albedo,diameter,H,period_yr,semimajor_au,eccentricity,inclination,arg_perihelion,long_asc_node,mean_anomaly,epoch_mjd"
+        }
+        async with httpx.AsyncClient(timeout=60) as x:
+            r = await x.get(SBDB_QUERY, params=params)
+            if r.status_code == 200:
+                return r.json()
+            else:
+                # Return fallback data instead of crashing
+                return {
+                    "count": 0,
+                    "data": [],
+                    "error": f"SBDB API returned {r.status_code}: {r.text[:200]}"
+                }
+    except Exception as e:
+        # Return fallback data instead of crashing
+        return {
+            "count": 0,
+            "data": [],
+            "error": f"Failed to fetch comet data: {str(e)}"
+        }
+
+@app.get("/api/sbdb/asteroids")
+async def sbdb_asteroids(limit: int = 100):
+    """Get main belt asteroid data"""
+    try:
+        params = {
+            "query": "asteroid=Y",
+            "limit": str(limit),
+            "fields": "full_name,des,orbit_class,albedo,diameter,H,period_yr,semimajor_au,eccentricity,inclination,arg_perihelion,long_asc_node,mean_anomaly,epoch_mjd"
+        }
+        async with httpx.AsyncClient(timeout=60) as x:
+            r = await x.get(SBDB_QUERY, params=params)
+            if r.status_code == 200:
+                return r.json()
+            else:
+                # Return fallback data instead of crashing
+                return {
+                    "count": 0,
+                    "data": [],
+                    "error": f"SBDB API returned {r.status_code}: {r.text[:200]}"
+                }
+    except Exception as e:
+        # Return fallback data instead of crashing
+        return {
+            "count": 0,
+            "data": [],
+            "error": f"Failed to fetch asteroid data: {str(e)}"
+        }
 
 @app.get("/api/sbdb/object")
 async def sbdb_object(des: str):
+    """Get detailed information about a specific object"""
     try:
         params = {"sstr": des}
         async with httpx.AsyncClient(timeout=60) as x:
@@ -320,10 +411,158 @@ async def sbdb_object(des: str):
     except Exception as e:
         return {"error": str(e)}
 
+# ---- NASA APOD (Astronomy Picture of the Day) ----
+@app.get("/api/nasa/apod")
+async def nasa_apod(date: str = None, count: int = 1):
+    """Get Astronomy Picture of the Day"""
+    try:
+        params = {"api_key": NASA_API_KEY}
+        if date:
+            params["date"] = date
+        if count > 1:
+            params["count"] = count
+        
+        async with httpx.AsyncClient(timeout=30) as x:
+            r = await x.get(APOD_API, params=params)
+            if r.status_code == 200:
+                return r.json()
+            else:
+                return {"error": f"APOD API returned {r.status_code}: {r.text[:200]}"}
+    except Exception as e:
+        return {"error": f"Failed to fetch APOD data: {str(e)}"}
+
+# ---- Exoplanet Data ----
+@app.get("/api/nasa/exoplanets")
+async def nasa_exoplanets(limit: int = 100):
+    """Get exoplanet data from NASA Exoplanet Archive"""
+    try:
+        query = """
+        SELECT TOP {} 
+            pl_name, hostname, pl_orbper, pl_rade, pl_masse, pl_dens, 
+            pl_eqt, pl_orbincl, pl_orbeccen, pl_orbsmax, 
+            st_teff, st_rad, st_mass, st_dist, st_met, st_age
+        FROM ps 
+        WHERE pl_rade IS NOT NULL 
+        ORDER BY pl_rade DESC
+        """.format(limit)
+        
+        params = {"query": query, "format": "json"}
+        async with httpx.AsyncClient(timeout=60) as x:
+            r = await x.get(EXOPLANET_API, params=params)
+            if r.status_code == 200:
+                return r.json()
+            else:
+                return {"error": f"Exoplanet API returned {r.status_code}: {r.text[:200]}"}
+    except Exception as e:
+        return {"error": f"Failed to fetch exoplanet data: {str(e)}"}
+
+# ---- Mars Rover Photos ----
+@app.get("/api/nasa/mars-rover")
+async def nasa_mars_rover(rover: str = "curiosity", sol: int = None, earth_date: str = None, camera: str = None):
+    """Get Mars rover photos"""
+    try:
+        endpoint = f"{MARS_ROVER_API}/rovers/{rover}/photos"
+        params = {"api_key": NASA_API_KEY}
+        
+        if sol is not None:
+            params["sol"] = sol
+        elif earth_date:
+            params["earth_date"] = earth_date
+        else:
+            # Default to latest available sol
+            params["sol"] = 1000
+        
+        if camera:
+            params["camera"] = camera
+        
+        async with httpx.AsyncClient(timeout=60) as x:
+            r = await x.get(endpoint, params=params)
+            if r.status_code == 200:
+                return r.json()
+            else:
+                return {"error": f"Mars Rover API returned {r.status_code}: {r.text[:200]}"}
+    except Exception as e:
+        return {"error": f"Failed to fetch Mars rover data: {str(e)}"}
+
+# ---- Space Weather and Solar Activity ----
+@app.get("/api/nasa/space-weather")
+async def nasa_space_weather():
+    """Get space weather data including solar flares"""
+    endpoints = {
+        "flr": f"{SPACE_WEATHER_API}/FLR",
+        "sep": f"{SPACE_WEATHER_API}/SEP", 
+        "cme": f"{SPACE_WEATHER_API}/CME",
+        "gst": f"{SPACE_WEATHER_API}/GST"
+    }
+    
+    results = {}
+    async with httpx.AsyncClient(timeout=60) as x:
+        for event_type, url in endpoints.items():
+            try:
+                params = {"api_key": NASA_API_KEY, "startDate": "2024-01-01", "endDate": datetime.now().strftime("%Y-%m-%d")}
+                r = await x.get(url, params=params)
+                if r.status_code == 200:
+                    results[event_type] = r.json()
+                else:
+                    results[event_type] = {"error": f"Status {r.status_code}"}
+            except Exception as e:
+                results[event_type] = {"error": str(e)}
+    
+    return results
+
+# ---- Enhanced Asteroid Watch ----
+@app.get("/api/nasa/asteroid-watch")
+async def nasa_asteroid_watch(start_date: str = None, end_date: str = None):
+    """Get asteroid watch data with enhanced information"""
+    if not start_date:
+        start_date = datetime.now().strftime("%Y-%m-%d")
+    if not end_date:
+        end_date = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d")
+    
+    endpoint = f"{ASTEROID_WATCH_API}/feed"
+    params = {
+        "api_key": NASA_API_KEY,
+        "start_date": start_date,
+        "end_date": end_date
+    }
+    
+    async with httpx.AsyncClient(timeout=60) as x:
+        r = await x.get(endpoint, params=params)
+        r.raise_for_status()
+        return r.json()
+
+# ---- Satellite and Spacecraft Tracking ----
+@app.get("/api/satellites")
+async def get_satellites():
+    """Get major satellite and spacecraft positions"""
+    # This would integrate with satellite tracking APIs like N2YO or Space-Track
+    # For now, returning major spacecraft with known positions
+    satellites = {
+        "iss": {"name": "International Space Station", "type": "spacecraft", "orbit": "LEO"},
+        "hubble": {"name": "Hubble Space Telescope", "type": "telescope", "orbit": "LEO"},
+        "james_webb": {"name": "James Webb Space Telescope", "type": "telescope", "orbit": "L2"},
+        "perseverance": {"name": "Perseverance Rover", "type": "rover", "location": "Mars"},
+        "curiosity": {"name": "Curiosity Rover", "type": "rover", "location": "Mars"}
+    }
+    return satellites
+
 # ---- Health ----
 @app.get("/api/health")
 async def health():
-    return {"ok": True, "ts": time.time(), "message": "Solar System API running with fallback data"}
+    return {
+        "ok": True, 
+        "ts": time.time(),
+        "version": "0.2.0",
+        "apis": {
+            "horizons": "JPL Horizons",
+            "sbdb": "JPL Small Body Database", 
+            "apod": "NASA APOD",
+            "exoplanets": "NASA Exoplanet Archive",
+            "mars_rover": "NASA Mars Rover Photos",
+            "space_weather": "NASA Space Weather",
+            "asteroid_watch": "NASA Asteroid Watch"
+        }
+    }
 
 # ---- Additional endpoints ----
 @app.get("/api/planet-info/{planet_id}")

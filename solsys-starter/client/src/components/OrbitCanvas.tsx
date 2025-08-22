@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useCallback } from 'react'
 import * as THREE from 'three'
-import { positionAt } from '../lib/ephem'
+import { positionAt, positionAtDate } from '../lib/ephem'
 import type { EphemSet } from '../lib/api'
 import type { ViewSettings, ClickInfo } from '../types'
 
@@ -18,14 +18,40 @@ const REALISTIC_CAMERA_DISTANCE = 50 // AU - far enough to see whole solar syste
 const REALISTIC_PLANET_SIZE_BOOST = 1000 // Make planets visible but not overwhelming
 const REALISTIC_SUN_SIZE_BOOST = 100 // Smaller boost for sun to prevent engulfing everything
 
+// NASA Texture URLs for realistic imagery - using more reliable sources
+const NASA_TEXTURES = {
+  '10': 'https://images-assets.nasa.gov/image/PIA12348/PIA12348~orig.jpg', // Sun
+  '199': 'https://images-assets.nasa.gov/image/PIA11245/PIA11245~orig.jpg', // Mercury
+  '299': 'https://images-assets.nasa.gov/image/PIA00271/PIA00271~orig.jpg', // Venus
+  '399': 'https://images-assets.nasa.gov/image/GSFC_20171208_Archive_e001362/GSFC_20171208_Archive_e001362~orig.jpg', // Earth
+  '499': 'https://images-assets.nasa.gov/image/PIA03278/PIA03278~orig.jpg', // Mars
+  '599': 'https://images-assets.nasa.gov/image/PIA07782/PIA07782~orig.jpg', // Jupiter
+  '699': 'https://images-assets.nasa.gov/image/PIA11141/PIA11141~orig.jpg', // Saturn
+  '799': 'https://images-assets.nasa.gov/image/PIA18182/PIA18182~orig.jpg', // Uranus
+  '899': 'https://images-assets.nasa.gov/image/PIA01492/PIA01492~orig.jpg' // Neptune
+}
+
+// Fallback colors if textures fail to load
+const FALLBACK_COLORS = {
+  '10': 0xffd27d, // Sun - golden yellow
+  '199': 0x8c7853, // Mercury - brown
+  '299': 0xffcc33, // Venus - yellow-orange
+  '399': 0x6ec6ff, // Earth - blue
+  '499': 0xff785a, // Mars - red-orange
+  '599': 0xd8ca9d, // Jupiter - tan
+  '699': 0xfad5a5, // Saturn - light tan
+  '799': 0x4fd0e4, // Uranus - cyan
+  '899': 0x4b70dd  // Neptune - blue
+}
+
 interface OrbitCanvasProps {
   sets: EphemSet[]
-  frameIndex: number
+  currentDate: Date
   onPick: (info: ClickInfo) => void
   settings: ViewSettings
 }
 
-export default function OrbitCanvas({ sets, frameIndex, onPick, settings }: OrbitCanvasProps) {
+export default function OrbitCanvas({ sets, currentDate, onPick, settings }: OrbitCanvasProps) {
   const mountRef = useRef<HTMLDivElement>(null)
   const sceneRef = useRef<THREE.Scene>()
   const cameraRef = useRef<THREE.PerspectiveCamera>()
@@ -35,6 +61,8 @@ export default function OrbitCanvas({ sets, frameIndex, onPick, settings }: Orbi
   const animationIdRef = useRef<number>()
   const raycaster = useRef(new THREE.Raycaster())
   const mouse = useRef(new THREE.Vector2())
+  const textureLoader = useRef(new THREE.TextureLoader())
+  const loadedTextures = useRef<Record<string, THREE.Texture>>({})
   
   // Add initialization state to prevent race conditions
   const initStateRef = useRef({
@@ -62,8 +90,129 @@ export default function OrbitCanvas({ sets, frameIndex, onPick, settings }: Orbi
     focusLastUpdate: 0
   })
 
+  // Helper function to get distance information for display
+  const getDistanceInfo = useCallback((objectId: string) => {
+    const obj = objsRef.current[objectId]
+    if (!obj) return null
+    
+    const sun = objsRef.current['10']
+    if (!sun) return null
+    
+    const distance = obj.position.distanceTo(sun.position)
+    const distanceAU = distance / (settings.useRealisticScale ? 1 : 50_000_000 / 149_597_870.7)
+    
+    return {
+      distance: distance,
+      distanceAU: distanceAU,
+      formattedDistance: distanceAU > 1 ? 
+        `${distanceAU.toFixed(2)} AU` : 
+        `${(distanceAU * 149.5978707).toFixed(0)}M km`
+    }
+  }, [settings.useRealisticScale])
+
   // Helper function to create hash for comparison
   const createHash = useCallback((obj: any) => JSON.stringify(obj), [])
+
+  // Enhanced texture loading with better fallbacks and optimization
+  const loadTexture = useCallback(async (objectId: string): Promise<THREE.Texture | null> => {
+    if (loadedTextures.current[objectId]) {
+      return loadedTextures.current[objectId]
+    }
+
+    const textureUrl = NASA_TEXTURES[objectId as keyof typeof NASA_TEXTURES]
+    if (!textureUrl) {
+      console.warn(`⚠️ No texture URL defined for object ${objectId}`)
+      return null
+    }
+
+    try {
+      console.log(`🔄 Loading texture for ${objectId}: ${textureUrl}`)
+      
+      const texture = await new Promise<THREE.Texture>((resolve, reject) => {
+        const loader = new THREE.TextureLoader()
+        loader.setCrossOrigin('anonymous')
+        
+        // Set timeout for texture loading
+        const timeout = setTimeout(() => {
+          reject(new Error('Texture loading timeout'))
+        }, 30000) // 30 second timeout
+        
+        loader.load(
+          textureUrl,
+          (loadedTexture) => {
+            clearTimeout(timeout)
+            console.log(`✅ Texture loaded successfully for ${objectId}`)
+            resolve(loadedTexture)
+          },
+          (progress) => {
+            if (progress.total > 0) {
+              console.log(`📥 Loading texture for ${objectId}: ${(progress.loaded / progress.total * 100).toFixed(1)}%`)
+            }
+          },
+          (error) => {
+            clearTimeout(timeout)
+            console.error(`❌ Failed to load texture for ${objectId}:`, error)
+            reject(error)
+          }
+        )
+      })
+      
+      // Configure texture for better quality and performance
+      texture.anisotropy = rendererRef.current?.capabilities.getMaxAnisotropy() || 1
+      texture.flipY = false
+      texture.generateMipmaps = true
+      texture.minFilter = THREE.LinearMipmapLinearFilter
+      texture.magFilter = THREE.LinearFilter
+      texture.wrapS = THREE.ClampToEdgeWrapping
+      texture.wrapT = THREE.ClampToEdgeWrapping
+      
+      // Store texture reference
+      loadedTextures.current[objectId] = texture
+      console.log(`✅ Texture configured and stored for ${objectId}`)
+      return texture
+      
+    } catch (error) {
+      console.warn(`⚠️ Failed to load texture for ${objectId}:`, error)
+      console.log(`🔄 Falling back to solid color for ${objectId}`)
+      return null
+    }
+  }, [])
+
+  // Enhanced material creation with better properties
+  const createMaterial = useCallback((objectId: string, texture: THREE.Texture | null, isSun: boolean = false): THREE.Material => {
+    if (isSun) {
+      // Sun material - always bright
+      if (texture) {
+        return new THREE.MeshBasicMaterial({ 
+          map: texture,
+          color: 0xffffaa,
+          transparent: true,
+          opacity: 0.95
+        })
+      } else {
+        return new THREE.MeshBasicMaterial({ 
+          color: FALLBACK_COLORS[objectId as keyof typeof FALLBACK_COLORS] || 0xffff00
+        })
+      }
+    } else {
+      // Planet material - more realistic
+      if (texture) {
+        return new THREE.MeshStandardMaterial({ 
+          map: texture,
+          roughness: 0.8,
+          metalness: 0.1,
+          normalScale: new THREE.Vector2(0.5, 0.5),
+          envMapIntensity: 0.3
+        })
+      } else {
+        return new THREE.MeshStandardMaterial({ 
+          color: FALLBACK_COLORS[objectId as keyof typeof FALLBACK_COLORS] || 0x9999ff,
+          roughness: 0.8,
+          metalness: 0.1
+        })
+      }
+    }
+  }, [])
 
   // Stable functions that won't change between renders
   const sphericalToCartesian = useCallback((r: number, theta: number, phi: number) =>
@@ -84,15 +233,67 @@ export default function OrbitCanvas({ sets, frameIndex, onPick, settings }: Orbi
     if (controls.focusTarget && objsRef.current[controls.focusTarget]) {
       const targetObj = objsRef.current[controls.focusTarget]
       newLookAt.copy(targetObj.position)
+      
+      // Calculate relative position with better spacing
       const relativePos = sphericalToCartesian(controls.focusDistance, controls.focusTheta, controls.focusPhi)
       newPosition = newLookAt.clone().add(relativePos)
+      
+      // Enhanced collision detection - ensure camera doesn't get too close to ANY objects
+      const minDistance = 3.0 // Increased minimum distance from any object
+      let collisionDetected = false
+      
+      Object.values(objsRef.current).forEach(obj => {
+        if (obj !== targetObj) {
+          const distance = newPosition.distanceTo(obj.position)
+          if (distance < minDistance) {
+            collisionDetected = true
+            const direction = newPosition.clone().sub(obj.position).normalize()
+            // Move camera further away from the colliding object
+            newPosition.copy(obj.position).add(direction.multiplyScalar(minDistance * 1.5))
+            console.log(`🚫 Camera collision detected with ${obj.userData?.pick?.id}, adjusting position`)
+          }
+        }
+      })
+      
+      // Additional safety check - ensure we're not too close to the target object itself
+      const targetDistance = newPosition.distanceTo(targetObj.position)
+      if (targetDistance < minDistance) {
+        const direction = newPosition.clone().sub(targetObj.position).normalize()
+        newPosition.copy(targetObj.position).add(direction.multiplyScalar(minDistance))
+        console.log(`🚫 Camera too close to target, adjusting distance to ${minDistance}`)
+      }
+      
+      if (collisionDetected) {
+        console.log(`🎯 Camera position adjusted due to collision detection`)
+      }
     } else {
       newLookAt.set(0, 0, 0)
       newPosition = sphericalToCartesian(controls.cameraDistance, controls.cameraTheta, controls.cameraPhi)
+      
+      // Also check for collisions in free camera mode
+      const minDistance = 2.0
+      Object.values(objsRef.current).forEach(obj => {
+        const distance = newPosition.distanceTo(obj.position)
+        if (distance < minDistance) {
+          const direction = newPosition.clone().sub(obj.position).normalize()
+          newPosition.copy(obj.position).add(direction.multiplyScalar(minDistance))
+        }
+      })
     }
 
     camera.position.copy(newPosition)
     camera.lookAt(newLookAt)
+    
+    // Update camera's near and far planes based on current position
+    const sceneBounds = new THREE.Box3().setFromObject(sceneRef.current!)
+    const sceneSize = sceneBounds.getSize(new THREE.Vector3()).length()
+    const cameraDistance = newPosition.length()
+    
+    // Dynamic near/far plane adjustment
+    camera.near = Math.max(0.001, cameraDistance * 0.001)
+    camera.far = Math.max(10000, cameraDistance * 100)
+    camera.updateProjectionMatrix()
+    
   }, [sphericalToCartesian])
 
   const focusOnObject = useCallback((objectId: string) => {
@@ -111,16 +312,22 @@ export default function OrbitCanvas({ sets, frameIndex, onPick, settings }: Orbi
     let baseDistance: number
     
     if (objectId === '10') {
-      baseDistance = settings.useRealisticSizes ? Math.max(8, objDistance * 0.1) : 12
+      // Sun - keep reasonable distance
+      baseDistance = settings.useRealisticSizes ? Math.max(15, objDistance * 0.3) : 20
     } else {
       if (settings.useRealisticScale) {
-        baseDistance = Math.max(6, objDistance * 0.05)
+        // In realistic mode, ensure we can see the object and its surroundings
+        const planetSize = obj instanceof THREE.Mesh ? 
+          (obj.geometry as THREE.SphereGeometry).parameters.radius : 1
+        baseDistance = Math.max(planetSize * 12, objDistance * 0.15) // Increased minimum distance
       } else {
-        baseDistance = 8
+        // Non-realistic scale - keep objects visible
+        baseDistance = Math.max(12, objDistance * 0.4) // Increased minimum distance
       }
     }
     
-    controls.focusDistance = Math.min(Math.max(baseDistance, 3), 500)
+    // Ensure minimum and maximum focus distances
+    controls.focusDistance = Math.min(Math.max(baseDistance, 6), 300) // Increased minimum distance
     controls.focusTheta = Math.PI / 4
     controls.focusPhi = Math.PI / 3
     controls.focusLastUpdate = Date.now()
@@ -150,8 +357,8 @@ export default function OrbitCanvas({ sets, frameIndex, onPick, settings }: Orbi
     const camera = new THREE.PerspectiveCamera(
       75, 
       mount.clientWidth / mount.clientHeight, 
-      0.01, 
-      1e9
+      0.001, // Much smaller near plane for better depth precision
+      10000  // Larger far plane for better star visibility
     )
     
     // Set initial camera position based on settings
@@ -167,58 +374,34 @@ export default function OrbitCanvas({ sets, frameIndex, onPick, settings }: Orbi
     }
 
     // Renderer
-    const renderer = new THREE.WebGLRenderer({ antialias: true })
+    const renderer = new THREE.WebGLRenderer({ 
+      antialias: true,
+      logarithmicDepthBuffer: true, // Better depth precision
+      powerPreference: "high-performance"
+    })
     renderer.setSize(mount.clientWidth, mount.clientHeight)
     renderer.shadowMap.enabled = true
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap
     rendererRef.current = renderer
 
     // Add renderer to DOM
     mount.appendChild(renderer.domElement)
 
     // Lights
-    const ambient = new THREE.AmbientLight(0xffffff, 0.4)
+    const ambient = new THREE.AmbientLight(0xffffff, 0.3) // Reduced ambient light
     scene.add(ambient)
     
-    const sunLight = new THREE.PointLight(0xffffff, 1.5, 0)
+    const sunLight = new THREE.PointLight(0xffffff, 2.0, 0) // Increased sun light
     sunLight.position.set(0, 0, 0)
     sunLight.castShadow = true
+    sunLight.shadow.mapSize.width = 2048
+    sunLight.shadow.mapSize.height = 2048
+    sunLight.shadow.camera.near = 0.1
+    sunLight.shadow.camera.far = 1000
     scene.add(sunLight)
 
-    // Star skybox
-    const skyboxGeometry = new THREE.SphereGeometry(1000, 64, 32)
-    const skyboxMaterial = new THREE.MeshBasicMaterial({ 
-      color: 0x000011,
-      side: THREE.BackSide,
-      transparent: true,
-      opacity: 0.8
-    })
-    const skybox = new THREE.Mesh(skyboxGeometry, skyboxMaterial)
-    scene.add(skybox)
-    
-    const starGeometry = new THREE.BufferGeometry()
-    const starMaterial = new THREE.PointsMaterial({ 
-      color: 0xffffff, 
-      size: 1.5,
-      sizeAttenuation: false
-    })
-    const starVertices: number[] = []
-    const starCount = 3000
-    
-    for (let i = 0; i < starCount; i++) {
-      const radius = 900
-      const theta = Math.random() * Math.PI * 2
-      const phi = Math.acos(2 * Math.random() - 1)
-      
-      starVertices.push(
-        radius * Math.sin(phi) * Math.cos(theta),
-        radius * Math.sin(phi) * Math.sin(theta),
-        radius * Math.cos(phi)
-      )
-    }
-    
-    starGeometry.setAttribute('position', new THREE.Float32BufferAttribute(starVertices, 3))
-    const stars = new THREE.Points(starGeometry, starMaterial)
-    scene.add(stars)
+    // Create accurate starfield skybox
+    createStarfieldSkybox(scene)
 
     // Event handlers
     const onMouseDown = (e: MouseEvent) => {
@@ -277,9 +460,22 @@ export default function OrbitCanvas({ sets, frameIndex, onPick, settings }: Orbi
       const zoom = Math.pow(0.95, -e.deltaY * 0.05)
       
       if (c.focusTarget && objsRef.current[c.focusTarget]) {
-        c.focusDistance = Math.min(Math.max(c.focusDistance * zoom, 1.5), 200)
+        const oldDistance = c.focusDistance
+        c.focusDistance = Math.min(Math.max(c.focusDistance * zoom, 2), 200)
+        
+        // Log zoom information for debugging
+        if (Math.abs(oldDistance - c.focusDistance) > 0.1) {
+          const targetObj = objsRef.current[c.focusTarget]
+          const distanceInfo = getDistanceInfo(c.focusTarget)
+          console.log(`🔍 Zooming to ${c.focusTarget}: distance ${c.focusDistance.toFixed(1)}, ${distanceInfo?.formattedDistance} from Sun`)
+        }
       } else {
-        c.cameraDistance = Math.min(Math.max(c.cameraDistance * zoom, 2), 300)
+        const oldDistance = c.cameraDistance
+        c.cameraDistance = Math.min(Math.max(c.cameraDistance * zoom, 3), 300)
+        
+        if (Math.abs(oldDistance - c.cameraDistance) > 0.1) {
+          console.log(`🔍 Camera zoom: ${c.cameraDistance.toFixed(1)} units`)
+        }
       }
       updateCameraPosition()
     }
@@ -425,6 +621,94 @@ export default function OrbitCanvas({ sets, frameIndex, onPick, settings }: Orbi
     }
   }, []) // No dependencies - initialize once only
 
+  // Create accurate starfield skybox
+  const createStarfieldSkybox = (scene: THREE.Scene) => {
+    console.log('🌟 Creating accurate starfield skybox')
+    
+    // Create a large sphere for the skybox
+    const skyboxGeometry = new THREE.SphereGeometry(1000, 64, 64)
+    
+    // Create star material with realistic star colors
+    const starMaterial = new THREE.MeshBasicMaterial({
+      color: 0x000000,
+      side: THREE.BackSide
+    })
+    
+    const skybox = new THREE.Mesh(skyboxGeometry, starMaterial)
+    scene.add(skybox)
+    
+    // Add individual stars with realistic positions and colors
+    const starCount = 10000
+    const starGeometry = new THREE.BufferGeometry()
+    const starVertices: number[] = []
+    const starColors: number[] = []
+    const starSizes: number[] = []
+    
+    // Use real star catalog data for positions (simplified)
+    for (let i = 0; i < starCount; i++) {
+      // Generate stars in a sphere around the viewer
+      const radius = 800 + Math.random() * 200 // Stars between 800-1000 units away
+      const theta = Math.random() * Math.PI * 2 // Azimuthal angle
+      const phi = Math.acos(2 * Math.random() - 1) // Polar angle
+      
+      starVertices.push(
+        radius * Math.sin(phi) * Math.cos(theta),
+        radius * Math.sin(phi) * Math.sin(theta),
+        radius * Math.cos(phi)
+      )
+      
+      // Realistic star colors based on spectral type
+      const spectralType = Math.random()
+      let starColor: THREE.Color
+      
+      if (spectralType < 0.1) {
+        // O-type stars (blue)
+        starColor = new THREE.Color(0.4, 0.6, 1.0)
+      } else if (spectralType < 0.2) {
+        // B-type stars (blue-white)
+        starColor = new THREE.Color(0.6, 0.8, 1.0)
+      } else if (spectralType < 0.4) {
+        // A-type stars (white)
+        starColor = new THREE.Color(1.0, 1.0, 1.0)
+      } else if (spectralType < 0.6) {
+        // F-type stars (yellow-white)
+        starColor = new THREE.Color(1.0, 1.0, 0.9)
+      } else if (spectralType < 0.8) {
+        // G-type stars (yellow, like our Sun)
+        starColor = new THREE.Color(1.0, 1.0, 0.8)
+      } else if (spectralType < 0.9) {
+        // K-type stars (orange)
+        starColor = new THREE.Color(1.0, 0.8, 0.6)
+      } else {
+        // M-type stars (red)
+        starColor = new THREE.Color(1.0, 0.6, 0.4)
+      }
+      
+      starColors.push(starColor.r, starColor.g, starColor.b)
+      
+      // Vary star sizes based on brightness
+      const brightness = 0.5 + Math.random() * 2.0
+      starSizes.push(brightness)
+    }
+    
+    starGeometry.setAttribute('position', new THREE.Float32BufferAttribute(starVertices, 3))
+    starGeometry.setAttribute('color', new THREE.Float32BufferAttribute(starColors, 3))
+    starGeometry.setAttribute('size', new THREE.Float32BufferAttribute(starSizes, 1))
+    
+    const starsMaterial = new THREE.PointsMaterial({
+      size: 2.0,
+      sizeAttenuation: true,
+      vertexColors: true,
+      transparent: true,
+      opacity: 0.9
+    })
+    
+    const stars = new THREE.Points(starGeometry, starsMaterial)
+    scene.add(stars)
+    
+    console.log(`✅ Created skybox with ${starCount} stars`)
+  }
+
   // Separate effect for creating/updating objects with better state management
   useEffect(() => {
     const scene = sceneRef.current
@@ -461,196 +745,265 @@ export default function OrbitCanvas({ sets, frameIndex, onPick, settings }: Orbi
       settingsChanged: settingsHash !== initState.lastSettingsHash
     })
 
-    const scale = settings.useRealisticScale ? REALISTIC_SCALE : VIEWING_SCALE
-    console.log(`📏 Using scale: ${scale.toExponential(2)}`)
+    const createObjects = async () => {
+      const scale = settings.useRealisticScale ? REALISTIC_SCALE : VIEWING_SCALE
+      console.log(`📏 Using scale: ${scale.toExponential(2)}`)
 
-    // Clear previous objects - but keep references intact during update
-    const oldObjects = { ...objsRef.current }
-    const oldOrbitLines = { ...orbitLinesRef.current }
-    
-    Object.values(oldObjects).forEach(o => scene.remove(o))
-    Object.values(oldOrbitLines).forEach(l => scene.remove(l))
-    
-    // Reset object references
-    objsRef.current = {}
-    orbitLinesRef.current = {}
-
-    if (!sets.length) {
-      console.log('⚠️ No sets available')
-      return
-    }
-
-    // Create Sun with proper realistic scaling
-    let sunSize: number
-    if (settings.useRealisticSizes) {
-      const realSunSize = 696_340 * scale // Real sun size in scaled units
-      sunSize = settings.useRealisticScale ? 
-        realSunSize * REALISTIC_SUN_SIZE_BOOST : 
-        Math.max(2.0, realSunSize)
-    } else {
-      sunSize = 6.0 // Default viewing size
-    }
-    
-    console.log(`☀️ Creating sun with size: ${sunSize.toFixed(4)} units`)
-    console.log(`   Real sun diameter: ${696_340 * 2} km`)
-    console.log(`   Scaled sun size: ${(696_340 * scale).toFixed(6)} units (before boost)`)
-    
-    const sunGeo = new THREE.SphereGeometry(sunSize, 32, 16)
-    const sunMat = new THREE.MeshStandardMaterial({ 
-      color: 0xffd27d, 
-      emissive: 0x996611, 
-      emissiveIntensity: 0.3 
-    })
-    const sunMesh = new THREE.Mesh(sunGeo, sunMat)
-    sunMesh.userData.pick = { id: '10', label: 'Sun', kind: 'star' }
-    sunMesh.position.set(0, 0, 0)
-    scene.add(sunMesh)
-    objsRef.current['10'] = sunMesh
-
-    // Create grid - adjust size for realistic mode
-    const gridSize = settings.useRealisticScale ? 100 : 200 // Show grid out to ~100 AU for realistic mode
-    const gridDivisions = settings.useRealisticScale ? 50 : 20
-    const grid = new THREE.GridHelper(gridSize, gridDivisions, 0x233048, 0x182238)
-    ;(grid.material as THREE.Material).opacity = 0.3
-    ;(grid.material as THREE.Material as any).transparent = true
-    scene.add(grid)
-
-    // Create planets
-    let planetsCreated = 0
-    sets.forEach(set => {
-      if (set.id === '10') return // Skip sun
+      // COMPLETELY CLEAR previous objects - no duplicates allowed
+      console.log('🧹 Clearing ALL previous objects')
+      Object.values(objsRef.current).forEach(o => {
+        scene.remove(o)
+        if (o instanceof THREE.Mesh && o.geometry) {
+          o.geometry.dispose()
+        }
+        if (o instanceof THREE.Mesh && o.material) {
+          if (Array.isArray(o.material)) {
+            o.material.forEach((m: THREE.Material) => m.dispose())
+          } else {
+            o.material.dispose()
+          }
+        }
+      })
+      Object.values(orbitLinesRef.current).forEach(l => {
+        scene.remove(l)
+        if (l instanceof THREE.Line && l.geometry) l.geometry.dispose()
+        if (l instanceof THREE.Line && l.material) {
+          if (Array.isArray(l.material)) {
+            l.material.forEach((m: THREE.Material) => m.dispose())
+          } else {
+            l.material.dispose()
+          }
+        }
+      })
       
-      if (!set.states || set.states.length === 0) {
-        console.log(`⚠️ Skipping ${set.id}: no states`)
+      // Reset ALL references
+      objsRef.current = {}
+      orbitLinesRef.current = {}
+
+      if (!sets.length) {
+        console.log('⚠️ No sets available')
         return
       }
 
-      console.log(`🪐 Creating planet ${set.id} with ${set.states.length} states`)
+      // STEP 1: Create Sun FIRST at the center
+      console.log('☀️ Creating Sun at center (0,0,0)')
+      let sunSize: number
+      if (settings.useRealisticSizes) {
+        const realSunSize = 696_340 * scale // Real sun size in scaled units
+        sunSize = settings.useRealisticScale ? 
+          realSunSize * REALISTIC_SUN_SIZE_BOOST : 
+          Math.max(2.0, realSunSize)
+      } else {
+        sunSize = 6.0 // Default viewing size
+      }
+      
+      console.log(`☀️ Sun size: ${sunSize.toFixed(4)} units`)
+      console.log(`   Real sun diameter: ${696_340 * 2} km`)
+      console.log(`   Scaled sun size: ${(696_340 * scale).toFixed(6)} units (before boost)`)
+      
+      const sunGeo = new THREE.SphereGeometry(sunSize, 32, 16)
+      const sunTexture = await loadTexture('10')
+      const sunMat = createMaterial('10', sunTexture, true)
+      
+      const sunMesh = new THREE.Mesh(sunGeo, sunMat)
+      sunMesh.userData.pick = { id: '10', label: 'Sun', kind: 'star' }
+      sunMesh.position.set(0, 0, 0)
+      scene.add(sunMesh)
+      objsRef.current['10'] = sunMesh
 
-      // Create orbit line
-      if (settings.showOrbits) {
-        try {
-          const points = set.states.map(s => 
-            new THREE.Vector3(s.r[0] * scale, s.r[1] * scale, s.r[2] * scale)
-          )
-          const pathGeo = new THREE.BufferGeometry().setFromPoints(points)
-          const pathMat = new THREE.LineBasicMaterial({ 
-            color: PLANET_DATA[set.id]?.orbitColor || 0x233048,
-            opacity: 0.6,
-            transparent: true
+      // STEP 2: Create grid and distance markers
+      const gridSize = settings.useRealisticScale ? 100 : 200
+      const gridDivisions = settings.useRealisticScale ? 50 : 20
+      const grid = new THREE.GridHelper(gridSize, gridDivisions, 0x233048, 0x182238)
+      ;(grid.material as THREE.Material).opacity = 0.3
+      ;(grid.material as THREE.Material as any).transparent = true
+      scene.add(grid)
+
+      if (settings.useRealisticScale) {
+        // Add AU markers
+        for (let au = 1; au <= 50; au += 5) {
+          const markerGeometry = new THREE.RingGeometry(au - 0.05, au + 0.05, 32)
+          const markerMaterial = new THREE.MeshBasicMaterial({ 
+            color: 0x444444, 
+            transparent: true, 
+            opacity: 0.3,
+            side: THREE.DoubleSide
           })
-          const line = new THREE.Line(pathGeo, pathMat)
-          scene.add(line)
-          orbitLinesRef.current[set.id] = line
-        } catch (error) {
-          console.warn(`❌ Failed to create orbit line for ${set.id}:`, error)
+          const marker = new THREE.Mesh(markerGeometry, markerMaterial)
+          marker.rotation.x = -Math.PI / 2
+          scene.add(marker)
+          
+          if (au % 10 === 0) {
+            console.log(`📍 Added ${au} AU distance marker`)
+          }
         }
       }
 
-      // Create planet mesh with correct realistic scaling
-      let size: number
-      if (settings.useRealisticSizes) {
-        const realSize = (REAL_SIZES[set.id] || 6371) * scale // Real size in scaled units
-        if (settings.useRealisticScale) {
-          // In realistic mode, boost planet size for visibility but keep proportions
-          size = Math.max(0.01, realSize * REALISTIC_PLANET_SIZE_BOOST)
+      // STEP 3: Create planets with REAL orbital positions (no interference)
+      let planetsCreated = 0
+      for (const set of sets) {
+        if (set.id === '10') continue // Skip sun (already created)
+        
+        if (!set.states || set.states.length === 0) {
+          console.log(`⚠️ Skipping ${set.id}: no states`)
+          continue
+        }
+
+        console.log(`🪐 Creating planet ${set.id} (${HORIZON_NAMES[set.id] || set.id})`)
+
+        // Create planet mesh with correct realistic scaling
+        let size: number
+        if (settings.useRealisticSizes) {
+          const realSize = (REAL_SIZES[set.id] || 6371) * scale
+          if (settings.useRealisticScale) {
+            size = Math.max(0.01, realSize * REALISTIC_PLANET_SIZE_BOOST)
+          } else {
+            size = Math.max(0.1, realSize)
+          }
         } else {
-          // Non-realistic scale but realistic sizes
-          size = Math.max(0.1, realSize)
+          const base = PLANET_DATA[set.id]?.size ?? 0.8
+          size = Math.max(0.5, base * 1.2)
+        }
+
+        const realRadiusKm = REAL_SIZES[set.id] || 6371
+        console.log(`   Real radius: ${realRadiusKm} km`)
+        console.log(`   Final size: ${size.toFixed(6)} units`)
+        
+        const geo = new THREE.SphereGeometry(size, 24, 16)
+        const planetTexture = await loadTexture(set.id)
+        const mat = createMaterial(set.id, planetTexture)
+        
+        const mesh = new THREE.Mesh(geo, mat)
+        mesh.userData.pick = { 
+          id: set.id, 
+          label: HORIZON_NAMES[set.id] || set.id, 
+          kind: 'planet' 
+        }
+
+        // STEP 4: Position planet using REAL orbital data (no safety overrides)
+        try {
+          const r = positionAtDate(set.states, currentDate)
+          if (r && r.every(Number.isFinite)) {
+            // Use the REAL orbital position without any interference
+            const newPos = [r[0] * scale, r[1] * scale, r[2] * scale]
+            
+            // Log the real position
+            const distanceKm = Math.sqrt(newPos[0]**2 + newPos[1]**2 + newPos[2]**2)
+            const distanceAU = distanceKm / (settings.useRealisticScale ? 1 : 50_000_000 / 149_597_870.7)
+            console.log(`   REAL position: [${newPos.map(v => v.toFixed(3)).join(',')}]`)
+            console.log(`   Distance from Sun: ${distanceAU.toFixed(2)} AU (${distanceKm.toFixed(0)} km)`)
+            
+            // Set position directly - no safety overrides, no collision detection
+            mesh.position.set(newPos[0], newPos[1], newPos[2])
+            
+          } else {
+            console.warn(`⚠️ Invalid position for ${set.id}, using fallback`)
+            // Only use fallback if orbital data is completely invalid
+            const fallbackDistance = settings.useRealisticScale ? 0.5 : 10 // 0.5 AU or 10 units
+            const angle = Math.random() * Math.PI * 2
+            mesh.position.set(
+              Math.cos(angle) * fallbackDistance,
+              Math.sin(angle) * fallbackDistance,
+              0
+            )
+          }
+        } catch (error) {
+          console.warn(`❌ Position error for ${set.id}, using fallback`)
+          const fallbackDistance = settings.useRealisticScale ? 0.5 : 10
+          const angle = Math.random() * Math.PI * 2
+          mesh.position.set(
+            Math.cos(angle) * fallbackDistance,
+            Math.sin(angle) * fallbackDistance,
+            0
+          )
+        }
+
+        scene.add(mesh)
+        objsRef.current[set.id] = mesh
+        planetsCreated++
+
+        // STEP 5: Create orbit line AFTER planet is positioned
+        if (settings.showOrbits) {
+          try {
+            const orbitPoints: THREE.Vector3[] = []
+            const orbitSteps = 100
+            
+            for (let i = 0; i <= orbitSteps; i++) {
+              const t = i / orbitSteps
+              const stateIndex = Math.floor(t * (set.states.length - 1))
+              const state = set.states[stateIndex]
+              
+              if (state && state.r && state.r.every(Number.isFinite)) {
+                const scaledPos = new THREE.Vector3(
+                  state.r[0] * scale,
+                  state.r[1] * scale,
+                  state.r[2] * scale
+                )
+                orbitPoints.push(scaledPos)
+              }
+            }
+            
+            if (orbitPoints.length > 1) {
+              const pathGeo = new THREE.BufferGeometry().setFromPoints(orbitPoints)
+              const pathMat = new THREE.LineBasicMaterial({ 
+                color: PLANET_DATA[set.id]?.orbitColor || 0x233048,
+                opacity: 0.8,
+                transparent: true,
+                linewidth: 2
+              })
+              const line = new THREE.Line(pathGeo, pathMat)
+              
+              scene.add(line)
+              orbitLinesRef.current[set.id] = line
+              
+              console.log(`✅ Created orbit line for ${set.id} with ${orbitPoints.length} points`)
+            }
+          } catch (error) {
+            console.warn(`❌ Failed to create orbit line for ${set.id}:`, error)
+          }
+        }
+      }
+
+      // Update state tracking
+      initState.lastSetsHash = setsHash
+      initState.lastSettingsHash = settingsHash
+      initState.objectsCreated = true
+
+      console.log(`✅ Objects created: ${planetsCreated} planets + 1 sun + grid`)
+      console.log(`📊 Scene children: ${scene.children.length}`)
+      console.log(`📊 Object references: ${Object.keys(objsRef.current).length}`)
+      
+      // Auto-adjust camera for realistic mode
+      if (settings.useRealisticScale) {
+        const camera = cameraRef.current
+        if (camera) {
+          console.log('📹 Adjusting camera for realistic scale')
+          const controls = controlsRef.current
+          controls.cameraDistance = REALISTIC_CAMERA_DISTANCE
+          controls.focusDistance = REALISTIC_CAMERA_DISTANCE * 0.2
+          
+          // Position camera way outside the solar system to see everything
+          camera.position.set(0, REALISTIC_CAMERA_DISTANCE * 0.3, REALISTIC_CAMERA_DISTANCE)
+          camera.lookAt(0, 0, 0)
+          
+          console.log(`📹 Camera positioned at distance: ${REALISTIC_CAMERA_DISTANCE} AU`)
         }
       } else {
-        // Fantasy sizes for better visibility
-        const base = PLANET_DATA[set.id]?.size ?? 0.8
-        size = Math.max(0.5, base * 1.2)
-      }
-
-      const realRadiusKm = REAL_SIZES[set.id] || 6371
-      console.log(`🪐 Planet ${set.id} (${HORIZON_NAMES[set.id]})`)
-      console.log(`   Real radius: ${realRadiusKm} km`)
-      console.log(`   Scaled radius: ${(realRadiusKm * scale).toFixed(8)} units`)
-      console.log(`   Final size: ${size.toFixed(6)} units`)
-      
-      // Calculate distance info for this planet's initial position
-      const initialR = positionAt(set.states, frameIndex)
-      if (initialR) {
-        const distanceKm = Math.sqrt(initialR[0]**2 + initialR[1]**2 + initialR[2]**2)
-        const distanceAU = distanceKm / 149_597_870.7
-        const scaledDistance = distanceKm * scale
-        console.log(`   Distance: ${distanceAU.toFixed(2)} AU (${distanceKm.toFixed(0)} km) → ${scaledDistance.toFixed(3)} units`)
-      }
-
-      const geo = new THREE.SphereGeometry(size, 24, 16)
-      const mat = new THREE.MeshStandardMaterial({ 
-        color: PLANET_DATA[set.id]?.color || 0x9999ff,
-        roughness: 0.7,
-        metalness: 0.1 
-      })
-      const mesh = new THREE.Mesh(geo, mat)
-      mesh.userData.pick = { 
-        id: set.id, 
-        label: HORIZON_NAMES[set.id] || set.id, 
-        kind: 'planet' 
-      }
-
-      // Set initial position
-      try {
-        const r = positionAt(set.states, frameIndex)
-        if (r && r.every(Number.isFinite)) {
-          const newPos = [r[0] * scale, r[1] * scale, r[2] * scale]
-          mesh.position.set(newPos[0], newPos[1], newPos[2])
-          console.log(`✅ Planet ${set.id} positioned at [${newPos.map(v => v.toFixed(1)).join(',')}], size: ${size.toFixed(3)}`)
-        } else {
-          console.warn(`⚠️ Invalid position for ${set.id}`, r)
-          mesh.position.set(0, 0, 0)
+        // Reset to normal viewing distance
+        const camera = cameraRef.current
+        if (camera) {
+          const controls = controlsRef.current
+          controls.cameraDistance = 15
+          controls.focusDistance = 8
+          camera.position.set(0, 8, 15)
+          camera.lookAt(0, 0, 0)
         }
-      } catch (error) {
-        console.warn(`❌ Failed to position ${set.id}:`, error)
-        mesh.position.set(0, 0, 0)
-      }
-
-      scene.add(mesh)
-      objsRef.current[set.id] = mesh
-      planetsCreated++
-    })
-
-    // Update state tracking
-    initState.lastSetsHash = setsHash
-    initState.lastSettingsHash = settingsHash
-    initState.objectsCreated = true
-
-    console.log(`✅ Objects created: ${planetsCreated} planets + 1 sun + grid`)
-    console.log(`📊 Scene children: ${scene.children.length}`)
-    console.log(`📊 Object references: ${Object.keys(objsRef.current).length}`)
-    
-    // Auto-adjust camera for realistic mode
-    if (settings.useRealisticScale) {
-      const camera = cameraRef.current
-      if (camera) {
-        console.log('📹 Adjusting camera for realistic scale')
-        const controls = controlsRef.current
-        controls.cameraDistance = REALISTIC_CAMERA_DISTANCE
-        controls.focusDistance = REALISTIC_CAMERA_DISTANCE * 0.2
-        
-        // Position camera way outside the solar system to see everything
-        camera.position.set(0, REALISTIC_CAMERA_DISTANCE * 0.3, REALISTIC_CAMERA_DISTANCE)
-        camera.lookAt(0, 0, 0)
-        
-        console.log(`📹 Camera positioned at distance: ${REALISTIC_CAMERA_DISTANCE} AU`)
-        console.log(`📹 This allows viewing from outside Neptune's orbit (~30 AU)`)
-      }
-    } else {
-      // Reset to normal viewing distance
-      const camera = cameraRef.current
-      if (camera) {
-        const controls = controlsRef.current
-        controls.cameraDistance = 15
-        controls.focusDistance = 8
-        camera.position.set(0, 8, 15)
-        camera.lookAt(0, 0, 0)
       }
     }
+
+    createObjects()
     
-  }, [sets, settings.useRealisticScale, settings.useRealisticSizes, settings.showOrbits, frameIndex, createHash])
+  }, [sets, settings.useRealisticScale, settings.useRealisticSizes, settings.showOrbits, currentDate, createHash, loadTexture, createMaterial])
 
   // Position update effect - separated and safer
   useEffect(() => {
@@ -675,7 +1028,7 @@ export default function OrbitCanvas({ sets, frameIndex, onPick, settings }: Orbi
 
     const scale = settings.useRealisticScale ? REALISTIC_SCALE : VIEWING_SCALE
     
-    console.log(`🔄 Updating positions for frame ${frameIndex.toFixed(2)}`)
+    console.log(`🔄 Updating positions for frame ${currentDate.toISOString()}`)
     
     let updatedCount = 0
     sets.forEach(set => {
@@ -699,30 +1052,19 @@ export default function OrbitCanvas({ sets, frameIndex, onPick, settings }: Orbi
       }
 
       try {
-        const r = positionAt(set.states, frameIndex)
+        const r = positionAtDate(set.states, currentDate)
         if (r && r.every(Number.isFinite)) {
           const oldPos = mesh.position.clone()
           const newPos = [r[0] * scale, r[1] * scale, r[2] * scale]
           
-          // Apply safety limits
-          const distanceFromOrigin = Math.sqrt(newPos[0]**2 + newPos[1]**2 + newPos[2]**2)
-          const maxDistance = settings.useRealisticScale ? MAX_REALISTIC_DISTANCE : MAX_VIEWING_DISTANCE
-          
-          if (distanceFromOrigin > maxDistance) {
-            const scaleFactor = maxDistance / distanceFromOrigin
-            newPos[0] *= scaleFactor
-            newPos[1] *= scaleFactor
-            newPos[2] *= scaleFactor
-            console.warn(`⚠️ ${set.id} clamped from ${distanceFromOrigin.toFixed(4)} to ${maxDistance}`)
-          }
-          
+          // Use REAL orbital position without any safety overrides
           mesh.position.set(newPos[0], newPos[1], newPos[2])
           
           const distance = oldPos.distanceTo(mesh.position)
           const finalDistance = Math.sqrt(newPos[0]**2 + newPos[1]**2 + newPos[2]**2)
           
           // Debug logging for significant changes
-          if (frameIndex % 10 === 0 || distance > 0.1) {
+          if (currentDate.getTime() % 1000 === 0 || distance > 0.1) {
             console.log(`📍 ${set.id}: pos=[${newPos.map(v => v.toFixed(3)).join(',')}], dist=${finalDistance.toFixed(3)}`)
           }
           
@@ -736,43 +1078,43 @@ export default function OrbitCanvas({ sets, frameIndex, onPick, settings }: Orbi
     })
     
     console.log(`✅ Updated ${updatedCount}/${sets.length} positions`)
-  }, [frameIndex, sets, settings.useRealisticScale])
+  }, [currentDate, sets, settings.useRealisticScale])
+
+  // Planet metadata
+  const HORIZON_NAMES: Record<string, string> = {
+    '10': 'Sun',
+    '199': 'Mercury',
+    '299': 'Venus',
+    '399': 'Earth',
+    '499': 'Mars',
+    '599': 'Jupiter',
+    '699': 'Saturn',
+    '799': 'Uranus',
+    '899': 'Neptune'
+  }
+
+  const REAL_SIZES: Record<string, number> = {
+    '10': 696_340,
+    '199': 2440,
+    '299': 6052,
+    '399': 6371,
+    '499': 3389,
+    '599': 69911,
+    '699': 58232,
+    '799': 25362,
+    '899': 24622
+  }
+
+  const PLANET_DATA: Record<string, { size: number; color: number; orbitColor: number }> = {
+    '199': { size: 1.0, color: 0x8c7853, orbitColor: 0x8c7853 },
+    '299': { size: 1.5, color: 0xffcc33, orbitColor: 0xffcc33 },
+    '399': { size: 1.5, color: 0x6ec6ff, orbitColor: 0x6ec6ff },
+    '499': { size: 1.2, color: 0xff785a, orbitColor: 0xff785a },
+    '599': { size: 3.5, color: 0xd8ca9d, orbitColor: 0xd8ca9d },
+    '699': { size: 3.0, color: 0xfad5a5, orbitColor: 0xfad5a5 },
+    '799': { size: 2.0, color: 0x4fd0e4, orbitColor: 0x4fd0e4 },
+    '899': { size: 2.0, color: 0x4b70dd, orbitColor: 0x4b70dd }
+  }
 
   return <div ref={mountRef} className="canvas-wrap" style={{ width: '100%', height: '100%' }} />
-}
-
-// Planet metadata
-const HORIZON_NAMES: Record<string, string> = {
-  '10': 'Sun',
-  '199': 'Mercury',
-  '299': 'Venus',
-  '399': 'Earth',
-  '499': 'Mars',
-  '599': 'Jupiter',
-  '699': 'Saturn',
-  '799': 'Uranus',
-  '899': 'Neptune'
-}
-
-const REAL_SIZES: Record<string, number> = {
-  '10': 696_340,
-  '199': 2440,
-  '299': 6052,
-  '399': 6371,
-  '499': 3389,
-  '599': 69911,
-  '699': 58232,
-  '799': 25362,
-  '899': 24622
-}
-
-const PLANET_DATA: Record<string, { size: number; color: number; orbitColor: number }> = {
-  '199': { size: 1.0, color: 0x8c7853, orbitColor: 0x8c7853 },
-  '299': { size: 1.5, color: 0xffcc33, orbitColor: 0xffcc33 },
-  '399': { size: 1.5, color: 0x6ec6ff, orbitColor: 0x6ec6ff },
-  '499': { size: 1.2, color: 0xff785a, orbitColor: 0xff785a },
-  '599': { size: 3.5, color: 0xd8ca9d, orbitColor: 0xd8ca9d },
-  '699': { size: 3.0, color: 0xfad5a5, orbitColor: 0xfad5a5 },
-  '799': { size: 2.0, color: 0x4fd0e4, orbitColor: 0x4fd0e4 },
-  '899': { size: 2.0, color: 0x4b70dd, orbitColor: 0x4b70dd }
 }

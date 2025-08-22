@@ -1,254 +1,183 @@
-import React, { useState } from 'react'
+import React from 'react'
+import type { ViewSettings } from '../types'
 
 interface TimeControlsProps {
   playing: boolean
   onPlayPause: () => void
-  frameIndex: number
-  maxFrames: number
-  onFrameChange: (frame: number) => void
   timeRange: string
   onTimeRangeChange: (range: string) => void
-  currentDate: string
-  onSpeedChange: (speed: number) => void
   animationSpeed: number
+  onSpeedChange: (speed: number) => void
+  currentDate: Date
+  startDate: Date
+  endDate: Date
+  onDateChange: (date: Date) => void
 }
 
 export default function TimeControls({
   playing,
   onPlayPause,
-  frameIndex,
-  maxFrames,
-  onFrameChange,
   timeRange,
   onTimeRangeChange,
-  currentDate,
+  animationSpeed,
   onSpeedChange,
-  animationSpeed
+  currentDate,
+  startDate,
+  endDate,
+  onDateChange
 }: TimeControlsProps) {
-  const [showCustomRange, setShowCustomRange] = useState(false)
-  const [customStart, setCustomStart] = useState('')
-  const [customEnd, setCustomEnd] = useState('')
-
-  const timeRanges = [
-    { value: '7days', label: '7 Days', step: '4 h' },
-    { value: '10days', label: '10 Days', step: '6 h' },
-    { value: '30days', label: '30 Days', step: '12 h' },
-    { value: '90days', label: '90 Days', step: '1 d' },
-    { value: '365days', label: '1 Year', step: '3 d' },
-    { value: 'custom', label: 'Custom', step: 'varies' }
-  ]
-
-  const speedOptions = [
-    { value: 0.1, label: '0.1×' },
-    { value: 0.25, label: '0.25×' },
-    { value: 0.5, label: '0.5×' },
-    { value: 1, label: '1×' },
-    { value: 2, label: '2×' },
-    { value: 4, label: '4×' },
-    { value: 8, label: '8×' }
-  ]
-
-  const formatDate = (dateStr: string) => {
-    try {
-      return new Date(dateStr).toLocaleDateString('en-US', {
-        month: 'short',
-        day: 'numeric',
-        year: 'numeric'
-      })
-    } catch {
-      return dateStr
-    }
+  // Calculate progress percentage
+  const getProgressPercentage = () => {
+    const totalDuration = endDate.getTime() - startDate.getTime()
+    const elapsed = currentDate.getTime() - startDate.getTime()
+    return Math.min(100, Math.max(0, (elapsed / totalDuration) * 100))
   }
 
-  const getProgress = () => {
-    if (maxFrames === 0) return 0
-    return (frameIndex / maxFrames) * 100
+  // Set date from progress
+  const setDateFromProgress = (percentage: number) => {
+    const totalDuration = endDate.getTime() - startDate.getTime()
+    const elapsed = totalDuration * (percentage / 100)
+    const newDate = new Date(startDate.getTime() + elapsed)
+    onDateChange(newDate)
+  }
+
+  // Format date for display
+  const formatDate = (date: Date) => {
+    return date.toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric'
+    })
+  }
+
+  // Format time for display
+  const formatTime = (date: Date) => {
+    return date.toLocaleTimeString('en-US', {
+      hour: '2-digit',
+      minute: '2-digit'
+    })
   }
 
   return (
-    <div style={{
-      position: 'absolute',
-      bottom: '12px',
-      left: '50%',
-      transform: 'translateX(-50%)',
-      background: 'var(--panel)',
-      border: '1px solid var(--border)',
-      borderRadius: '12px',
-      padding: '12px',
-      zIndex: 60,
-      minWidth: '400px',
-      maxWidth: '90vw'
-    }}>
-      {/* Main Controls */}
-      <div style={{ 
-        display: 'flex', 
-        alignItems: 'center', 
-        gap: '12px',
-        marginBottom: '8px',
-        flexWrap: 'wrap',
-        justifyContent: 'center'
-      }}>
-        {/* Play/Pause */}
-        <button
-          className="btn"
-          onClick={onPlayPause}
-          style={{ 
-            padding: '8px 12px',
-            fontSize: '14px',
-            minWidth: '80px'
-          }}
-        >
-          {playing ? '⏸️ Pause' : '▶️ Play'}
-        </button>
+    <div className="time-controls">
+      <div className="controls-header">
+        <h3>⏰ Timeline Controls</h3>
+        <div className="control-group">
+          <button
+            className="btn"
+            onClick={onPlayPause}
+            style={{ 
+              padding: '8px 16px',
+              fontSize: '14px',
+              minWidth: '80px',
+              background: playing ? '#ff6b6b' : '#4ecdc4'
+            }}
+          >
+            {playing ? '⏸️ Pause' : '▶️ Play'}
+          </button>
+        </div>
+      </div>
 
-        {/* Time Range Selector */}
+      <div className="control-group">
+        <label>Time Range:</label>
         <select
           className="btn"
           value={timeRange}
-          onChange={(e) => {
-            onTimeRangeChange(e.target.value)
-            setShowCustomRange(e.target.value === 'custom')
-          }}
-          style={{ 
-            background: '#1b263b',
-            color: 'var(--fg)',
-            minWidth: '100px'
-          }}
+          onChange={(e) => onTimeRangeChange(e.target.value)}
         >
-          {timeRanges.map(range => (
-            <option key={range.value} value={range.value}>
-              {range.label}
-            </option>
-          ))}
+          <option value="7days">7 Days</option>
+          <option value="10days">10 Days</option>
+          <option value="30days">30 Days</option>
+          <option value="90days">90 Days</option>
+          <option value="365days">1 Year</option>
         </select>
+      </div>
 
-        {/* Speed Control */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-          <span style={{ fontSize: '12px', color: 'var(--muted)' }}>Speed:</span>
-          <select
-            className="btn"
-            value={animationSpeed}
-            onChange={(e) => onSpeedChange(parseFloat(e.target.value))}
-            style={{ 
-              background: '#1b263b',
-              color: 'var(--fg)',
-              fontSize: '12px',
-              padding: '4px 6px'
-            }}
-          >
-            {speedOptions.map(speed => (
-              <option key={speed.value} value={speed.value}>
-                {speed.label}
-              </option>
-            ))}
-          </select>
+      <div className="control-group">
+        <label>Animation Speed:</label>
+        <select
+          className="btn"
+          value={animationSpeed}
+          onChange={(e) => onSpeedChange(parseFloat(e.target.value))}
+        >
+          <option value={0.1}>0.1×</option>
+          <option value={0.25}>0.25×</option>
+          <option value={0.5}>0.5×</option>
+          <option value={1}>1×</option>
+          <option value={2}>2×</option>
+          <option value={4}>4×</option>
+          <option value={8}>8×</option>
+        </select>
+      </div>
+
+      <div className="control-group">
+        <label>Current Date: {formatDate(currentDate)}</label>
+        <div style={{ fontSize: '12px', color: 'var(--muted)' }}>
+          {formatTime(currentDate)}
         </div>
       </div>
 
-      {/* Custom Date Range */}
-      {showCustomRange && (
-        <div style={{
-          display: 'flex',
-          gap: '8px',
-          marginBottom: '8px',
-          alignItems: 'center',
-          flexWrap: 'wrap',
-          justifyContent: 'center'
-        }}>
-          <input
-            type="date"
-            value={customStart}
-            onChange={(e) => setCustomStart(e.target.value)}
-            className="btn"
-            style={{ background: '#1b263b', color: 'var(--fg)' }}
-          />
-          <span style={{ fontSize: '12px', color: 'var(--muted)' }}>to</span>
-          <input
-            type="date"
-            value={customEnd}
-            onChange={(e) => setCustomEnd(e.target.value)}
-            className="btn"
-            style={{ background: '#1b263b', color: 'var(--fg)' }}
-          />
+      <div className="control-group">
+        <label>Date Range: {formatDate(startDate)} - {formatDate(endDate)}</label>
+      </div>
+
+      <div className="timeline-scrubber">
+        <label>Timeline Scrubber</label>
+        <div className="scrubber-controls">
           <button
             className="btn"
-            onClick={() => {
-              if (customStart && customEnd) {
-                // Trigger custom range update
-                console.log('Custom range:', customStart, customEnd)
-              }
-            }}
-            style={{ fontSize: '12px', padding: '4px 8px' }}
+            onClick={() => setDateFromProgress(0)}
+            style={{ padding: '4px 8px', fontSize: '11px' }}
           >
-            Apply
+            Start
+          </button>
+          <button
+            className="btn"
+            onClick={() => setDateFromProgress(25)}
+            style={{ padding: '4px 8px', fontSize: '11px' }}
+          >
+            25%
+          </button>
+          <button
+            className="btn"
+            onClick={() => setDateFromProgress(50)}
+            style={{ padding: '4px 8px', fontSize: '11px' }}
+          >
+            50%
+          </button>
+          <button
+            className="btn"
+            onClick={() => setDateFromProgress(75)}
+            style={{ padding: '4px 8px', fontSize: '11px' }}
+          >
+            75%
+          </button>
+          <button
+            className="btn"
+            onClick={() => setDateFromProgress(100)}
+            style={{ padding: '4px 8px', fontSize: '11px' }}
+          >
+            End
           </button>
         </div>
-      )}
-
-      {/* Timeline Slider */}
-      <div style={{ marginBottom: '8px' }}>
-        <div style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          marginBottom: '4px'
+        <input
+          type="range"
+          className="range"
+          min={0}
+          max={100}
+          step={0.1}
+          value={getProgressPercentage()}
+          onChange={(e) => setDateFromProgress(parseFloat(e.target.value))}
+          style={{ width: '100%' }}
+        />
+        <div style={{ 
+          fontSize: '11px', 
+          color: 'var(--muted)',
+          textAlign: 'center',
+          marginTop: '4px'
         }}>
-          <span style={{ fontSize: '12px', color: 'var(--muted)' }}>
-            Frame {Math.round(frameIndex)} / {maxFrames}
-          </span>
-          <span style={{ fontSize: '12px', color: 'var(--muted)' }}>
-            {formatDate(currentDate)}
-          </span>
+          {getProgressPercentage().toFixed(1)}% complete
         </div>
-        
-        <div style={{ position: 'relative' }}>
-          <input
-            type="range"
-            className="range"
-            min={0}
-            max={maxFrames || 0}
-            step={0.1}
-            value={frameIndex}
-            onChange={(e) => onFrameChange(parseFloat(e.target.value))}
-            style={{ width: '100%' }}
-          />
-          
-          {/* Progress indicator */}
-          <div style={{
-            position: 'absolute',
-            top: '50%',
-            left: '0',
-            height: '6px',
-            background: 'linear-gradient(to right, #89b4ff, transparent)',
-            width: `${getProgress()}%`,
-            borderRadius: '3px',
-            transform: 'translateY(-50%)',
-            pointerEvents: 'none',
-            opacity: 0.3
-          }} />
-        </div>
-      </div>
-
-      {/* Info */}
-      <div style={{
-        fontSize: '11px',
-        color: 'var(--muted)',
-        textAlign: 'center',
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        flexWrap: 'wrap',
-        gap: '8px'
-      }}>
-        <span>
-          Range: {timeRanges.find(r => r.value === timeRange)?.label}
-        </span>
-        <span>
-          Step: {timeRanges.find(r => r.value === timeRange)?.step}
-        </span>
-        <span>
-          Speed: {animationSpeed}×
-        </span>
       </div>
     </div>
   )

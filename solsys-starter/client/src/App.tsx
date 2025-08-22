@@ -4,22 +4,19 @@ import type { EphemSet } from './lib/api'
 import type { ViewSettings, ClickInfo } from './types'
 import OrbitCanvas from './components/OrbitCanvas'
 import InfoDrawer from './components/InfoDrawer'
-import TimeControls from './components/TimeControls'
+import FloatingControls from './components/FloatingControls'
 import SettingsMenu from './components/SettingsMenu'
 import PlanetDirectory from './components/PlanetDirectory'
 import ErrorBoundary from './components/ErrorBoundary'
-import DebugViewer from './components/DebugViewer' // Import the debug component
+import SolarSystemDataManager, { type SolarSystemData } from './components/SolarSystemDataManager'
+import CelestialObjectCatalog from './components/CelestialObjectCatalog'
 import './styles.css'
 
 export default function App() {
-  // Debug mode toggle
-  const [debugMode, setDebugMode] = useState(false)
-  const [frameDebugMode, setFrameDebugMode] = useState(false)
-  const [visibilityTestMode, setVisibilityTestMode] = useState(false)
-  
   const [sets, setSets] = useState<EphemSet[]>([])
-  const [frameIndex, setFrameIndex] = useState(0)
-  const [maxFrames, setMaxFrames] = useState(0)
+  const [currentDate, setCurrentDate] = useState(new Date())
+  const [startDate, setStartDate] = useState(new Date())
+  const [endDate, setEndDate] = useState(new Date())
   const [playing, setPlaying] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string>()
@@ -28,6 +25,12 @@ export default function App() {
   const [timeRange, setTimeRange] = useState('30days')
   const [animationSpeed, setAnimationSpeed] = useState(1)
   const [selectedPlanet, setSelectedPlanet] = useState<string | null>(null)
+  const [showFloatingControls, setShowFloatingControls] = useState(true)
+
+  // New state for comprehensive solar system data
+  const [solarSystemData, setSolarSystemData] = useState<SolarSystemData | null>(null)
+  const [showCatalog, setShowCatalog] = useState(false)
+  const [selectedCatalogObject, setSelectedCatalogObject] = useState<any>(null)
 
   const [settings, setSettings] = useState<ViewSettings>({
     useRealisticScale: false,
@@ -36,12 +39,17 @@ export default function App() {
     followPlanet: null
   })
 
-  // Load ephemeris data
+  // Enhanced error handling with retry logic
+  const [retryCount, setRetryCount] = useState(0)
+  const [lastError, setLastError] = useState<string>()
+
+  // Load ephemeris data with retry logic
   useEffect(() => {
     const loadData = async () => {
       try {
         setLoading(true)
         setError(undefined)
+        setLastError(undefined)
         
         const now = new Date()
         const start = now.toISOString().split('T')[0]
@@ -70,61 +78,113 @@ export default function App() {
         
         const stop = futureDate.toISOString().split('T')[0]
         
+        // Update state dates
+        setStartDate(now)
+        setEndDate(futureDate)
+        setCurrentDate(now)
+        
         // Get step size based on range
         const stepSize = timeRange === '7days' ? '4 h' : 
                         timeRange === '10days' ? '6 h' :
                         timeRange === '30days' ? '12 h' :
                         timeRange === '90days' ? '1 d' : '3 d'
         
-        console.log(`Loading ephemeris data: ${start} to ${stop}, step: ${stepSize}`)
+        console.log(`🔄 Loading ephemeris data: ${start} to ${stop}, step: ${stepSize}`)
         
         const result = await getEphem(['10', '199', '299', '399', '499'], start, stop, stepSize)
         
-        console.log('Loaded ephemeris sets:', result)
-        setSets(result)
+        if (!result || result.length === 0) {
+          throw new Error('No ephemeris data received from API')
+        }
         
-        const maxLen = Math.max(...result.map(s => s.states?.length || 0))
-        setMaxFrames(maxLen - 1)
-        setFrameIndex(0)
+        console.log('✅ Loaded ephemeris sets:', result)
+        setSets(result)
+        setRetryCount(0) // Reset retry count on success
         
       } catch (err) {
-        console.error('Failed to load ephemeris data:', err)
-        setError(`Failed to load data: ${err}`)
+        const errorMessage = err instanceof Error ? err.message : String(err)
+        console.error('❌ Failed to load ephemeris data:', err)
+        
+        setLastError(errorMessage)
+        
+        // Implement retry logic
+        if (retryCount < 3) {
+          console.log(`🔄 Retrying in 5 seconds... (attempt ${retryCount + 1}/3)`)
+          setRetryCount(prev => prev + 1)
+          setError(`Failed to load data: ${errorMessage}. Retrying...`)
+          
+          // Retry after 5 seconds
+          setTimeout(() => {
+            setError(undefined)
+          }, 5000)
+        } else {
+          setError(`Failed to load data after 3 attempts: ${errorMessage}`)
+        }
       } finally {
         setLoading(false)
       }
     }
 
     loadData()
-  }, [timeRange])
+  }, [timeRange, retryCount])
 
-  // Animation loop
-  useEffect(() => {
-    if (!playing || maxFrames === 0) return
+  // Calculate time step based on animation speed and time range
+  const getTimeStep = () => {
+    const baseStep = timeRange === '7days' ? 4 * 60 * 60 * 1000 : // 4 hours
+                    timeRange === '10days' ? 6 * 60 * 60 * 1000 : // 6 hours
+                    timeRange === '30days' ? 12 * 60 * 60 * 1000 : // 12 hours
+                    timeRange === '90days' ? 24 * 60 * 60 * 1000 : // 1 day
+                    3 * 24 * 60 * 60 * 1000 // 3 days
     
-    const interval = setInterval(() => {
-      setFrameIndex(prev => {
-        const next = prev + (0.5 * animationSpeed)
-        return next >= maxFrames ? 0 : next
-      })
-    }, 50)
-    
-    return () => clearInterval(interval)
-  }, [playing, maxFrames, animationSpeed])
-
-  const getCurrentDate = () => {
-    if (!sets.length || !sets[0].states?.length) return new Date().toISOString()
-    const currentFrame = Math.floor(frameIndex)
-    const state = sets[0].states[currentFrame]
-    return state?.t || new Date().toISOString()
+    return baseStep * animationSpeed
   }
 
+  // Enhanced animation loop with better performance
+  useEffect(() => {
+    if (!playing || !sets.length) return
+    
+    let animationFrameId: number
+    let lastTime = Date.now()
+    
+    const animate = () => {
+      const currentTime = Date.now()
+      const deltaTime = currentTime - lastTime
+      
+      // Only update if enough time has passed (cap at 60 FPS)
+      if (deltaTime >= 16) { // ~60 FPS
+        setCurrentDate(prevDate => {
+          const newDate = new Date(prevDate)
+          const timeStep = getTimeStep()
+          newDate.setTime(prevDate.getTime() + timeStep)
+          
+          // Loop back to start date if we exceed end date
+          if (newDate > endDate) {
+            return new Date(startDate)
+          }
+          
+          return newDate
+        })
+        
+        lastTime = currentTime
+      }
+      
+      animationFrameId = requestAnimationFrame(animate)
+    }
+    
+    animate()
+    
+    return () => {
+      if (animationFrameId) {
+        cancelAnimationFrame(animationFrameId)
+      }
+    }
+  }, [playing, sets.length, startDate, endDate, getTimeStep])
+
   const handlePick = (info: ClickInfo) => {
-    // Convert ClickInfo to Info type for InfoDrawer
     const convertedInfo = {
       id: info.id,
       label: info.label,
-      kind: info.kind === 'star' ? 'star' as const : 'planet' as const, // Only allow star or planet
+      kind: info.kind === 'star' ? 'star' as const : 'planet' as const,
       extra: {}
     }
     setSelectedInfo(convertedInfo)
@@ -133,159 +193,76 @@ export default function App() {
 
   const handlePlanetSelect = (planetId: string) => {
     setSelectedPlanet(planetId)
-    // Update settings to follow the selected planet
     setSettings(prev => ({ ...prev, followPlanet: planetId }))
   }
 
+  const handleSolarSystemDataUpdate = (data: SolarSystemData) => {
+    setSolarSystemData(data)
+    console.log('🌌 Solar system data updated:', data)
+  }
 
-  // If in debug mode, show only the debug viewer
-  if (debugMode) {
-    return (
-      <ErrorBoundary>
-        <div style={{ position: 'relative' }}>
-          <button
-            onClick={() => setDebugMode(false)}
-            style={{
-              position: 'absolute',
-              top: '10px',
-              right: '10px',
-              zIndex: 2000,
-              padding: '10px 15px',
-              background: '#ff4444',
-              color: 'white',
-              border: 'none',
-              borderRadius: '5px',
-              cursor: 'pointer',
-              fontWeight: 'bold'
-            }}
-          >
-            Exit Debug Mode
-          </button>
-          <DebugViewer />
-        </div>
-      </ErrorBoundary>
-    )
+  const handleCatalogObjectSelect = (object: any, type: string) => {
+    setSelectedCatalogObject({ object, type })
+    setShowCatalog(false)
+    
+    const info = {
+      id: object.id || object.des || 'unknown',
+      label: object.full_name || object.name || 'Unknown Object',
+      kind: 'planet' as const,
+      extra: { 
+        type,
+        object,
+        source: 'NASA API'
+      }
+    }
+    setSelectedInfo(info)
   }
 
   return (
     <ErrorBoundary>
       <div id="app">
-        {/* Header */}
-        <div className="header">
+        {/* Minimal Header */}
+        <div className="minimal-header">
           <div className="header-left">
-            <h1>🌌 Solar System Viewer</h1>
+            <h1>🌌 Solar System</h1>
           </div>
           
-          {/* Time Controls in Header */}
-          {!loading && !error && (
-            <div className="header-center">
-              <div className="controls">
-                {/* Play/Pause */}
-                <button
-                  className="btn"
-                  onClick={() => setPlaying(!playing)}
-                  style={{ 
-                    padding: '6px 12px',
-                    fontSize: '13px',
-                    minWidth: '70px',
-                    background: playing ? '#ff6b6b' : '#4ecdc4'
-                  }}
-                >
-                  {playing ? '⏸️ Pause' : '▶️ Play'}
-                </button>
-
-                {/* Time Range Selector */}
-                <select
-                  className="btn"
-                  value={timeRange}
-                  onChange={(e) => setTimeRange(e.target.value)}
-                  style={{ 
-                    background: '#1b263b',
-                    color: 'var(--fg)',
-                    minWidth: '90px',
-                    fontSize: '12px'
-                  }}
-                >
-                  <option value="7days">7 Days</option>
-                  <option value="10days">10 Days</option>
-                  <option value="30days">30 Days</option>
-                  <option value="90days">90 Days</option>
-                  <option value="365days">1 Year</option>
-                </select>
-
-                {/* Speed Control */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                  <span style={{ fontSize: '11px', color: 'var(--muted)' }}>Speed:</span>
-                  <select
-                    className="btn"
-                    value={animationSpeed}
-                    onChange={(e) => setAnimationSpeed(parseFloat(e.target.value))}
-                    style={{ 
-                      background: '#1b263b',
-                      color: 'var(--fg)',
-                      fontSize: '11px',
-                      padding: '4px 6px',
-                      minWidth: '55px'
-                    }}
-                  >
-                    <option value={0.1}>0.1×</option>
-                    <option value={0.25}>0.25×</option>
-                    <option value={0.5}>0.5×</option>
-                    <option value={1}>1×</option>
-                    <option value={2}>2×</option>
-                    <option value={4}>4×</option>
-                    <option value={8}>8×</option>
-                  </select>
-                </div>
-
-                {/* Frame Info */}
-                <div style={{ 
-                  fontSize: '11px', 
-                  color: 'var(--muted)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '8px',
-                  paddingLeft: '8px'
-                }}>
-                  <span>Frame: {Math.round(frameIndex)}/{maxFrames}</span>
-                  <span>•</span>
-                  <span>{new Date(getCurrentDate()).toLocaleDateString('en-US', {
-                    month: 'short',
-                    day: 'numeric',
-                    year: 'numeric'
-                  })}</span>
-                </div>
-              </div>
+          <div className="header-center">
+            <div className="date-display">
+              <span className="current-date">
+                {currentDate.toLocaleDateString('en-US', {
+                  month: 'short',
+                  day: 'numeric',
+                  year: 'numeric'
+                })}
+              </span>
+              <span className="date-range">
+                {startDate.toLocaleDateString('en-US', {
+                  month: 'short',
+                  day: 'numeric'
+                })} - {endDate.toLocaleDateString('en-US', {
+                  month: 'short',
+                  day: 'numeric',
+                  year: 'numeric'
+                })}
+              </span>
             </div>
-          )}
+          </div>
 
-          <div className="header-buttons">
+          <div className="header-right">
             <button 
-              className="btn" 
-              onClick={() => setVisibilityTestMode(true)}
-              style={{ background: '#00cc44', color: 'white' }}
+              className="icon-btn catalog-btn" 
+              onClick={() => setShowCatalog(true)}
+              title="Celestial Object Catalog"
             >
-              🔍 Visibility Test
+              📚
             </button>
             <button 
-              className="btn" 
-              onClick={() => setFrameDebugMode(true)}
-              style={{ background: '#ff9900', color: 'white' }}
-            >
-              🔧 Frame Debug
-            </button>
-            <button 
-              className="btn" 
-              onClick={() => setDebugMode(true)}
-              style={{ background: '#ff6b00', color: 'white' }}
-            >
-              🐛 Debug Mode
-            </button>
-            <button 
-              className="btn" 
+              className="icon-btn settings-btn" 
               onClick={() => setShowSettings(true)}
+              title="Settings"
             >
-              ⚙️ Settings
+              ⚙️
             </button>
           </div>
         </div>
@@ -293,46 +270,26 @@ export default function App() {
         {/* Main Content */}
         <div className="canvas-wrap">
           {loading && (
-            <div style={{
-              position: 'absolute',
-              top: '50%',
-              left: '50%',
-              transform: 'translate(-50%, -50%)',
-              background: 'var(--panel)',
-              padding: '20px',
-              borderRadius: '12px',
-              border: '1px solid var(--border)',
-              zIndex: 100,
-              textAlign: 'center'
-            }}>
-              <div className="spinner" style={{ margin: '0 auto 10px' }} />
-              <div>Loading solar system data...</div>
+            <div className="loading-overlay">
+              <div className="loading-content">
+                <div className="spinner" />
+                <div>Loading solar system data...</div>
+              </div>
             </div>
           )}
 
           {error && (
-            <div style={{
-              position: 'absolute',
-              top: '50%',
-              left: '50%',
-              transform: 'translate(-50%, -50%)',
-              background: '#ff4444',
-              color: 'white',
-              padding: '20px',
-              borderRadius: '12px',
-              zIndex: 100,
-              textAlign: 'center',
-              maxWidth: '400px'
-            }}>
-              <h3>Error</h3>
-              <p>{error}</p>
-              <button 
-                className="btn" 
-                onClick={() => window.location.reload()}
-                style={{ background: 'white', color: '#ff4444' }}
-              >
-                Reload
-              </button>
+            <div className="error-overlay">
+              <div className="error-content">
+                <h3>Error</h3>
+                <p>{error}</p>
+                <button 
+                  className="btn" 
+                  onClick={() => window.location.reload()}
+                >
+                  Reload
+                </button>
+              </div>
             </div>
           )}
 
@@ -340,7 +297,7 @@ export default function App() {
             <>
               <OrbitCanvas
                 sets={sets}
-                frameIndex={frameIndex}
+                currentDate={currentDate}
                 onPick={handlePick}
                 settings={settings}
               />
@@ -355,35 +312,42 @@ export default function App() {
                 selectedPlanet={selectedPlanet}
                 settings={settings}
               />
-              
-              {/* Timeline Slider at Bottom */}
-              <div style={{
-                position: 'absolute',
-                bottom: '12px',
-                left: '50%',
-                transform: 'translateX(-50%)',
-                background: 'var(--panel)',
-                border: '1px solid var(--border)',
-                borderRadius: '12px',
-                padding: '8px 16px',
-                zIndex: 60,
-                minWidth: '400px',
-                maxWidth: '90vw'
-              }}>
-                <div style={{ marginBottom: '4px', fontSize: '11px', color: 'var(--muted)', textAlign: 'center' }}>
-                  Timeline Scrubber
-                </div>
-                <input
-                  type="range"
-                  className="range"
-                  min={0}
-                  max={maxFrames || 0}
-                  step={0.1}
-                  value={frameIndex}
-                  onChange={(e) => setFrameIndex(parseFloat(e.target.value))}
-                  style={{ width: '100%' }}
+
+              {/* Floating Controls */}
+              {showFloatingControls && (
+                <FloatingControls
+                  playing={playing}
+                  onPlayPause={() => setPlaying(!playing)}
+                  timeRange={timeRange}
+                  onTimeRangeChange={setTimeRange}
+                  animationSpeed={animationSpeed}
+                  onSpeedChange={setAnimationSpeed}
+                  currentDate={currentDate}
+                  startDate={startDate}
+                  endDate={endDate}
+                  onDateChange={setCurrentDate}
+                  onToggle={() => setShowFloatingControls(false)}
                 />
-              </div>
+              )}
+
+              {/* Floating Data Manager */}
+              <SolarSystemDataManager
+                onDataUpdate={handleSolarSystemDataUpdate}
+                onError={setError}
+                autoRefresh={true}
+                refreshInterval={300000}
+              />
+
+              {/* Floating Toggle Button */}
+              {!showFloatingControls && (
+                <button
+                  className="floating-toggle-btn"
+                  onClick={() => setShowFloatingControls(true)}
+                  title="Show Controls"
+                >
+                  ⚡
+                </button>
+              )}
             </>
           )}
         </div>
@@ -395,6 +359,16 @@ export default function App() {
             onSettingsChange={setSettings}
             isOpen={showSettings}
             onClose={() => setShowSettings(false)}
+          />
+        )}
+
+        {/* Celestial Object Catalog */}
+        {showCatalog && solarSystemData && (
+          <CelestialObjectCatalog
+            data={solarSystemData}
+            onSelectObject={handleCatalogObjectSelect}
+            isOpen={showCatalog}
+            onClose={() => setShowCatalog(false)}
           />
         )}
       </div>
