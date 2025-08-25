@@ -5,12 +5,16 @@ type DetailsEvent = { id: string | null }
 type PlanetCard = {
   id: string
   name: string
-  kind: 'star' | 'planet'
+  kind: 'star' | 'planet' | 'moon' | 'dwarf_planet'
   color: string
   description: string
   stats: Record<string, string>
   facts: string[]
   horizonsId: string
+  moons?: string[]
+  parent?: string
+  atmosphere?: boolean
+  rings?: boolean
 }
 
 const DB: Record<string, PlanetCard> = {
@@ -93,6 +97,51 @@ const DB: Record<string, PlanetCard> = {
     facts: ['Two small moons', 'Ancient water signs'],
     horizonsId: '499',
   },
+  '301': {
+    id: '301',
+    name: 'Moon',
+    kind: 'moon',
+    color: '#cccccc',
+    description: 'Earth\'s only natural satellite. Heavily cratered surface with ancient lava plains.',
+    stats: {
+      mass: '7.342 × 10²² kg',
+      radius: '1,737 km',
+      orbitalPeriod: '27.3 days',
+    },
+    facts: ['Tidally locked to Earth', 'No atmosphere', 'Ancient lava flows'],
+    horizonsId: '301',
+    parent: '399'
+  },
+  '401': {
+    id: '401',
+    name: 'Phobos',
+    kind: 'moon',
+    color: '#666666',
+    description: 'Larger of Mars\' two moons. Irregular shape with many craters.',
+    stats: {
+      mass: '1.0659 × 10¹⁶ kg',
+      radius: '11.267 km',
+      orbitalPeriod: '7.66 hours',
+    },
+    facts: ['Closest moon to Mars', 'Irregular shape', 'Rapid orbit'],
+    horizonsId: '401',
+    parent: '499'
+  },
+  '402': {
+    id: '402',
+    name: 'Deimos',
+    kind: 'moon',
+    color: '#888888',
+    description: 'Smaller of Mars\' two moons. Smooth surface with few craters.',
+    stats: {
+      mass: '1.4762 × 10¹⁵ kg',
+      radius: '6.2 km',
+      orbitalPeriod: '30.3 hours',
+    },
+    facts: ['Smaller than Phobos', 'Smooth surface', 'Distant orbit'],
+    horizonsId: '402',
+    parent: '499'
+  },
   '599': {
     id: '599',
     name: 'Jupiter',
@@ -103,6 +152,68 @@ const DB: Record<string, PlanetCard> = {
     stats: { mass: '1.898 × 10²⁷ kg', dayLength: '9h 56m' },
     facts: ['>95 moons', 'Massive magnetosphere'],
     horizonsId: '599',
+    moons: ['501', '502', '503', '504'],
+    atmosphere: true
+  },
+  '501': {
+    id: '501',
+    name: 'Io',
+    kind: 'moon',
+    color: '#ffaa44',
+    description: 'Most volcanically active body in the Solar System. Sulfur-covered surface.',
+    stats: { 
+      mass: '8.932 × 10²² kg', 
+      radius: '1,821.6 km', 
+      orbitalPeriod: '1.77 days' 
+    },
+    facts: ['Most volcanic moon', 'Sulfur surface', 'Tidally heated'],
+    horizonsId: '501',
+    parent: '599'
+  },
+  '502': {
+    id: '502',
+    name: 'Europa',
+    kind: 'moon',
+    color: '#ffffff',
+    description: 'Icy surface with potential subsurface ocean. Target for astrobiology.',
+    stats: { 
+      mass: '4.800 × 10²² kg', 
+      radius: '1,560.8 km', 
+      orbitalPeriod: '3.55 days' 
+    },
+    facts: ['Icy surface', 'Subsurface ocean', 'Potential life'],
+    horizonsId: '502',
+    parent: '599'
+  },
+  '503': {
+    id: '503',
+    name: 'Ganymede',
+    kind: 'moon',
+    color: '#cccccc',
+    description: 'Largest moon in the Solar System. Larger than Mercury.',
+    stats: { 
+      mass: '1.482 × 10²³ kg', 
+      radius: '2,634.1 km', 
+      orbitalPeriod: '7.15 days' 
+    },
+    facts: ['Largest moon', 'Magnetic field', 'Subsurface ocean'],
+    horizonsId: '503',
+    parent: '599'
+  },
+  '504': {
+    id: '504',
+    name: 'Callisto',
+    kind: 'moon',
+    color: '#999999',
+    description: 'Heavily cratered moon with ancient surface. Least geologically active.',
+    stats: { 
+      mass: '1.076 × 10²³ kg', 
+      radius: '2,410.3 km', 
+      orbitalPeriod: '16.69 days' 
+    },
+    facts: ['Heavily cratered', 'Ancient surface', 'Stable orbit'],
+    horizonsId: '504',
+    parent: '599'
   },
   '699': {
     id: '699',
@@ -226,7 +337,11 @@ export default function InfoDrawer({ onClose }: Props) {
         <div style={{ flex: 1 }}>
           <div style={{ fontWeight: 700 }}>{card.name}</div>
           <div style={{ fontSize: 12, opacity: 0.8 }}>
-            {card.kind.toUpperCase()} • Directory
+            {card.kind.toUpperCase()}
+            {card.parent && ` • Moon of ${DB[card.parent]?.name || 'Unknown'}`}
+            {card.moons && card.moons.length > 0 && ` • ${card.moons.length} moons`}
+            {card.atmosphere && ' • Atmosphere'}
+            {card.rings && ' • Rings'}
           </div>
         </div>
         <button
@@ -284,6 +399,40 @@ export default function InfoDrawer({ onClose }: Props) {
             ))}
           </div>
         </div>
+        
+        {card.moons && card.moons.length > 0 && (
+          <div>
+            <div style={{ fontWeight: 700, marginBottom: 6 }}>Moons ({card.moons.length})</div>
+            <div style={{ display: 'grid', gap: 4 }}>
+              {card.moons.map(moonId => {
+                const moon = DB[moonId]
+                return moon ? (
+                  <div key={moonId} style={{ 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    gap: 8, 
+                    padding: '6px 8px',
+                    background: 'rgba(255,255,255,0.04)',
+                    border: '1px solid var(--border, #1e2a3a)',
+                    borderRadius: 8,
+                    fontSize: 12
+                  }}>
+                    <div style={{
+                      width: 16,
+                      height: 16,
+                      borderRadius: '50%',
+                      background: moon.color
+                    }} />
+                    <span>{moon.name}</span>
+                    <span style={{ opacity: 0.6, fontSize: 11 }}>
+                      {moon.stats.radius || moon.stats.orbitalPeriod}
+                    </span>
+                  </div>
+                ) : null
+              })}
+            </div>
+          </div>
+        )}
 
         <div>
           <div style={{ fontWeight: 700, marginBottom: 6 }}>Fast facts</div>

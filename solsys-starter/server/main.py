@@ -50,90 +50,423 @@ def _get_cached(key: Any):
 def _set_cached(key: Any, data: Any):
     _cache[_k(key)] = {"t": time.time(), "data": data}
 
-# Fallback orbital data for when NASA API is unavailable
-# Enhanced orbital data for all planets with accurate parameters
-ORBITAL_ELEMENTS = {
-    "199": {  # Mercury
-        "name": "Mercury",
-        "a": 57909050.0,      # Semi-major axis in km
-        "e": 0.2056,          # Eccentricity
-        "i": 7.00,            # Inclination in degrees
-        "period": 87.97,      # Orbital period in days
-        "mass": 3.301e23,     # Mass in kg
-        "radius": 2439.7      # Radius in km
+# Comprehensive celestial object database with accurate orbital and physical parameters
+CELESTIAL_OBJECTS = {
+    # Sun
+    "10": {
+        "name": "Sun",
+        "type": "star",
+        "a": 0.0,  # Sun is at center
+        "e": 0.0,
+        "i": 0.0,
+        "period": 0.0,
+        "mass": 1.989e30,  # kg
+        "radius": 696340.0,  # km
+        "texture": "sun_texture",
+        "color": 0xffd27d,
+        "atmosphere": False,
+        "rings": False
     },
-    "299": {  # Venus
+    
+    # Mercury
+    "199": {
+        "name": "Mercury",
+        "type": "planet",
+        "a": 57909050.0,  # km
+        "e": 0.2056,
+        "i": 7.00,
+        "period": 87.97,
+        "mass": 3.301e23,
+        "radius": 2439.7,
+        "texture": "mercury_texture",
+        "color": 0x8c7853,
+        "atmosphere": False,
+        "rings": False,
+        "moons": []
+    },
+    
+    # Venus
+    "299": {
         "name": "Venus",
+        "type": "planet",
         "a": 108208000.0,
         "e": 0.0067,
         "i": 3.39,
         "period": 224.70,
         "mass": 4.867e24,
-        "radius": 6051.8
+        "radius": 6051.8,
+        "texture": "venus_texture",
+        "color": 0xffcc33,
+        "atmosphere": True,
+        "rings": False,
+        "moons": []
     },
-    "399": {  # Earth
+    
+    # Earth
+    "399": {
         "name": "Earth",
+        "type": "planet",
         "a": 149597870.7,
         "e": 0.0167,
         "i": 0.0,
         "period": 365.25,
         "mass": 5.972e24,
-        "radius": 6371.0
+        "radius": 6371.0,
+        "texture": "earth_texture",
+        "color": 0x6ec6ff,
+        "atmosphere": True,
+        "rings": False,
+        "moons": ["301"]  # Moon
     },
-    "499": {  # Mars
-        "name": "Mars", 
+    
+    # Moon
+    "301": {
+        "name": "Moon",
+        "type": "moon",
+        "parent": "399",
+        "a": 384400.0,  # km from Earth
+        "e": 0.0549,
+        "i": 5.145,
+        "period": 27.32,
+        "mass": 7.342e22,
+        "radius": 1737.4,
+        "texture": "moon_texture",
+        "color": 0xcccccc,
+        "atmosphere": False,
+        "rings": False
+    },
+    
+    # Mars
+    "499": {
+        "name": "Mars",
+        "type": "planet",
         "a": 227939200.0,
         "e": 0.0935,
         "i": 1.85,
         "period": 686.98,
         "mass": 6.417e23,
-        "radius": 3389.5
+        "radius": 3389.5,
+        "texture": "mars_texture",
+        "color": 0xff785a,
+        "atmosphere": True,
+        "rings": False,
+        "moons": ["401", "402"]  # Phobos, Deimos
     },
-    "599": {  # Jupiter
+    
+    # Phobos
+    "401": {
+        "name": "Phobos",
+        "type": "moon",
+        "parent": "499",
+        "a": 421800.0,
+        "e": 0.0151,
+        "i": 1.075,
+        "period": 0.3189,
+        "mass": 1.0659e16,
+        "radius": 11.267,
+        "texture": "phobos_texture",
+        "color": 0xcccccc,
+        "atmosphere": False,
+        "rings": False
+    },
+    
+    # Deimos
+    "402": {
+        "name": "Deimos",
+        "type": "moon",
+        "parent": "499",
+        "a": 23463.0,
+        "e": 0.0002,
+        "i": 0.93,
+        "period": 1.2624,
+        "mass": 1.4762e15,
+        "radius": 6.2,
+        "texture": "deimos_texture",
+        "color": 0x888888,
+        "atmosphere": False,
+        "rings": False
+    },
+    
+    # Jupiter
+    "599": {
         "name": "Jupiter",
+        "type": "planet",
         "a": 778299000.0,
         "e": 0.0489,
         "i": 1.31,
-        "period": 4332.59,   # ~11.9 years
+        "period": 4332.59,
         "mass": 1.898e27,
-        "radius": 69911.0
+        "radius": 69911.0,
+        "texture": "jupiter_texture",
+        "color": 0xd8ca9d,
+        "atmosphere": True,
+        "rings": False,
+        "moons": ["501", "502", "503", "504"]  # Galilean moons
     },
-    "699": {  # Saturn
+    
+    # Io
+    "501": {
+        "name": "Io",
+        "type": "moon",
+        "parent": "599",
+        "a": 421800.0,
+        "e": 0.0041,
+        "i": 0.036,
+        "period": 1.7691,
+        "mass": 8.932e22,
+        "radius": 1821.6,
+        "texture": "io_texture",
+        "color": 0xffaa44,
+        "atmosphere": False,
+        "rings": False
+    },
+    
+    # Europa
+    "502": {
+        "name": "Europa",
+        "type": "moon",
+        "parent": "599",
+        "a": 671100.0,
+        "e": 0.0094,
+        "i": 0.466,
+        "period": 3.5512,
+        "mass": 4.800e22,
+        "radius": 1560.8,
+        "texture": "europa_texture",
+        "color": 0xffffff,
+        "atmosphere": False,
+        "rings": False
+    },
+    
+    # Ganymede
+    "503": {
+        "name": "Ganymede",
+        "type": "moon",
+        "parent": "599",
+        "a": 1070400.0,
+        "e": 0.0013,
+        "i": 0.177,
+        "period": 7.1546,
+        "mass": 1.482e23,
+        "radius": 1560.8,
+        "texture": "ganymede_texture",
+        "color": 0xcccccc,
+        "atmosphere": False,
+        "rings": False
+    },
+    
+    # Callisto
+    "504": {
+        "name": "Callisto",
+        "type": "moon",
+        "parent": "599",
+        "a": 1882700.0,
+        "e": 0.0074,
+        "i": 0.192,
+        "period": 16.6890,
+        "mass": 1.076e23,
+        "radius": 2410.3,
+        "texture": "callisto_texture",
+        "color": 0x999999,
+        "atmosphere": False,
+        "rings": False
+    },
+    
+    # Saturn
+    "699": {
         "name": "Saturn",
+        "type": "planet",
         "a": 1426666000.0,
         "e": 0.0565,
         "i": 2.49,
-        "period": 10759.22,  # ~29.5 years
+        "period": 10759.22,
         "mass": 5.683e26,
-        "radius": 58232.0
+        "radius": 58232.0,
+        "texture": "saturn_texture",
+        "color": 0xfad5a5,
+        "atmosphere": True,
+        "rings": True,
+        "moons": ["601", "602", "603", "604", "605", "606", "607", "608"]  # Major moons
     },
-    "799": {  # Uranus
+    
+    # Titan
+    "601": {
+        "name": "Titan",
+        "type": "moon",
+        "parent": "699",
+        "a": 1221870.0,
+        "e": 0.0288,
+        "i": 0.348,
+        "period": 15.9454,
+        "mass": 1.3452e23,
+        "radius": 2574.7,
+        "texture": "titan_texture",
+        "color": 0xffaa44,
+        "atmosphere": True,
+        "rings": False
+    },
+    
+    # Enceladus
+    "602": {
+        "name": "Enceladus",
+        "type": "moon",
+        "parent": "699",
+        "a": 238020.0,
+        "e": 0.0047,
+        "i": 0.009,
+        "period": 1.3702,
+        "mass": 1.08e20,
+        "radius": 252.1,
+        "texture": "enceladus_texture",
+        "color": 0xffffff,
+        "atmosphere": False,
+        "rings": False
+    },
+    
+    # Uranus
+    "799": {
         "name": "Uranus",
+        "type": "planet",
         "a": 2870658000.0,
         "e": 0.0457,
         "i": 0.77,
-        "period": 30688.5,   # ~84 years
+        "period": 30688.5,
         "mass": 8.681e25,
-        "radius": 25362.0
+        "radius": 25362.0,
+        "texture": "uranus_texture",
+        "color": 0x4fd0e4,
+        "atmosphere": True,
+        "rings": True,
+        "moons": ["701", "702", "703", "704", "705"]  # Major moons
     },
-    "899": {  # Neptune
+    
+    # Neptune
+    "899": {
         "name": "Neptune",
+        "type": "planet",
         "a": 4498396000.0,
         "e": 0.0113,
         "i": 1.77,
-        "period": 60182.0,   # ~165 years
+        "period": 60182.0,
         "mass": 1.024e26,
-        "radius": 24622.0
+        "radius": 24622.0,
+        "texture": "neptune_texture",
+        "color": 0x4b70dd,
+        "atmosphere": True,
+        "rings": True,
+        "moons": ["801"]  # Triton
+    },
+    
+    # Triton
+    "801": {
+        "name": "Triton",
+        "type": "moon",
+        "parent": "899",
+        "a": 354759.0,
+        "e": 0.000016,
+        "i": 156.885,
+        "period": -5.8769,  # Negative for retrograde
+        "mass": 1.4762e15,
+        "radius": 1353.4,
+        "texture": "triton_texture",
+        "color": 0xffffff,
+        "atmosphere": False,
+        "rings": False
+    },
+    
+    # Pluto (Dwarf Planet)
+    "999": {
+        "name": "Pluto",
+        "type": "dwarf_planet",
+        "a": 5906440628.0,
+        "e": 0.2488,
+        "i": 17.16,
+        "period": 90520.0,
+        "mass": 1.303e22,
+        "radius": 1188.3,
+        "texture": "pluto_texture",
+        "color": 0xccaa88,
+        "atmosphere": False,
+        "rings": False,
+        "moons": ["901"]  # Charon
+    },
+    
+    # Charon
+    "901": {
+        "name": "Charon",
+        "type": "moon",
+        "parent": "999",
+        "a": 19591.0,
+        "e": 0.0002,
+        "i": 0.080,
+        "period": 6.3872,
+        "mass": 1.586e21,
+        "radius": 606.0,
+        "texture": "charon_texture",
+        "color": 0x999999,
+        "atmosphere": False,
+        "rings": False
     }
+}
+
+# Legacy support - keep ORBITAL_ELEMENTS for backward compatibility
+ORBITAL_ELEMENTS = {k: {key: v[key] for key in ['name', 'a', 'e', 'i', 'period', 'mass', 'radius']} 
+                    for k, v in CELESTIAL_OBJECTS.items() if v['type'] in ['planet', 'dwarf_planet']}
+
+# High-resolution NASA texture URLs for realistic imagery
+NASA_TEXTURES = {
+    '10': 'https://images-assets.nasa.gov/image/PIA12348/PIA12348~orig.jpg',  # Sun
+    '199': 'https://images-assets.nasa.gov/image/PIA11245/PIA11245~orig.jpg',  # Mercury
+    '299': 'https://images-assets.nasa.gov/image/PIA00271/PIA00271~orig.jpg',  # Venus
+    '399': 'https://images-assets.nasa.gov/image/GSFC_20171208_Archive_e001362/GSFC_20171208_Archive_e001362~orig.jpg',  # Earth
+    '301': 'https://images-assets.nasa.gov/image/PIA00342/PIA00342~orig.jpg',  # Moon
+    '499': 'https://images-assets.nasa.gov/image/PIA03278/PIA03278~orig.jpg',  # Mars
+    '401': 'https://images-assets.nasa.gov/image/PIA10368/PIA10368~orig.jpg',  # Phobos
+    '402': 'https://images-assets.nasa.gov/image/PIA10369/PIA10369~orig.jpg',  # Deimos
+    '599': 'https://images-assets.nasa.gov/image/PIA07782/PIA07782~orig.jpg',  # Jupiter
+    '501': 'https://images-assets.nasa.gov/image/PIA00378/PIA00378~orig.jpg',  # Io
+    '502': 'https://images-assets.nasa.gov/image/PIA00342/PIA00342~orig.jpg',  # Europa
+    '503': 'https://images-assets.nasa.gov/image/PIA00342/PIA00342~orig.jpg',  # Ganymede
+    '504': 'https://images-assets.nasa.gov/image/PIA00342/PIA00342~orig.jpg',  # Callisto
+    '699': 'https://images-assets.nasa.gov/image/PIA11141/PIA11141~orig.jpg',  # Saturn
+    '601': 'https://images-assets.nasa.gov/image/PIA00342/PIA00342~orig.jpg',  # Titan
+    '602': 'https://images-assets.nasa.gov/image/PIA07752/PIA07752~orig.jpg',  # Enceladus
+    '799': 'https://images-assets.nasa.gov/image/PIA18182/PIA18182~orig.jpg',  # Uranus
+    '899': 'https://images-assets.nasa.gov/image/PIA01492/PIA01492~orig.jpg',  # Neptune
+    '801': 'https://images-assets.nasa.gov/image/PIA00342/PIA00342~orig.jpg',  # Triton
+    '999': 'https://images-assets.nasa.gov/image/PIA00342/PIA00342~orig.jpg',  # Pluto
+    '901': 'https://images-assets.nasa.gov/image/PIA00342/PIA00342~orig.jpg'   # Charon
 }
 
 def generate_orbital_positions(body_id: str, start: str, stop: str, step: str):
     """Generate orbital positions using Kepler's laws as fallback"""
-    if body_id not in ORBITAL_ELEMENTS:
+    if body_id not in CELESTIAL_OBJECTS:
         print(f"No orbital elements for {body_id}, returning empty positions")
         return []
     
-    elem = ORBITAL_ELEMENTS[body_id]
+    obj = CELESTIAL_OBJECTS[body_id]
+    
+    # Handle moons - they orbit around their parent planet
+    if obj['type'] == 'moon':
+        parent_id = obj['parent']
+        if parent_id not in CELESTIAL_OBJECTS:
+            print(f"Parent {parent_id} not found for moon {body_id}")
+            return []
+        
+        # Generate parent planet positions first
+        parent_positions = generate_orbital_positions(parent_id, start, stop, step)
+        if not parent_positions:
+            return []
+        
+        # Generate moon positions relative to parent
+        return generate_moon_positions(obj, parent_positions, start, stop, step)
+    
+    # Handle planets and other objects
+    if obj['type'] not in ['planet', 'dwarf_planet', 'star']:
+        print(f"Unsupported object type: {obj['type']}")
+        return []
+    
+    elem = obj
     
     try:
         # Parse time parameters
@@ -160,9 +493,10 @@ def generate_orbital_positions(body_id: str, start: str, stop: str, step: str):
             days_since_epoch = (current_time - datetime(2000, 1, 1)).total_seconds() / 86400
             mean_anomaly = (days_since_epoch / elem["period"]) * 2 * math.pi
             
-            # Simplified Kepler's equation solution
-            # For small eccentricity, E ≈ M + e*sin(M)
-            eccentric_anomaly = mean_anomaly + elem["e"] * math.sin(mean_anomaly)
+            # Enhanced Kepler's equation solution with iterative refinement
+            eccentric_anomaly = mean_anomaly
+            for _ in range(5):  # 5 iterations for convergence
+                eccentric_anomaly = mean_anomaly + elem["e"] * math.sin(eccentric_anomaly)
             
             # True anomaly calculation
             true_anomaly = 2 * math.atan2(
@@ -183,6 +517,11 @@ def generate_orbital_positions(body_id: str, start: str, stop: str, step: str):
             y_inclined = y * math.cos(inclination_rad) - z * math.sin(inclination_rad)
             z_inclined = y * math.sin(inclination_rad) + z * math.cos(inclination_rad)
             
+            # Calculate velocity components for more accurate simulation
+            mu = 1.32712440018e11  # Sun's gravitational parameter (km³/s²)
+            v_r = math.sqrt(mu / elem["a"]) * elem["e"] * math.sin(true_anomaly)
+            v_t = math.sqrt(mu / elem["a"]) * (1 + elem["e"] * math.cos(true_anomaly))
+            
             # Ensure we have valid numbers
             if not (math.isfinite(x) and math.isfinite(y_inclined) and math.isfinite(z_inclined)):
                 print(f"Invalid position calculated for {body_id} at {current_time}")
@@ -191,7 +530,7 @@ def generate_orbital_positions(body_id: str, start: str, stop: str, step: str):
             positions.append({
                 "t": current_time.isoformat(),
                 "r": [float(x), float(y_inclined), float(z_inclined)],
-                "v": [0.0, 0.0, 0.0]  # Simplified velocity
+                "v": [float(v_r), float(v_t), 0.0]  # Enhanced velocity
             })
             
             current_time += timedelta(hours=step_hours)
@@ -208,6 +547,83 @@ def generate_orbital_positions(body_id: str, start: str, stop: str, step: str):
             "r": [elem["a"], 0.0, 0.0],
             "v": [0.0, 0.0, 0.0]
         }]
+
+def generate_moon_positions(moon_obj: dict, parent_positions: list, start: str, stop: str, step: str):
+    """Generate moon positions relative to their parent planet"""
+    try:
+        start_date = datetime.fromisoformat(start)
+        stop_date = datetime.fromisoformat(stop)
+        
+        # Parse step
+        if "h" in step:
+            step_hours = float(step.replace("h", "").strip())
+        elif "d" in step:
+            step_hours = float(step.replace("d", "").strip()) * 24
+        else:
+            step_hours = 6
+        
+        positions = []
+        current_time = start_date
+        max_positions = 1000
+        position_count = 0
+        
+        while current_time <= stop_date and position_count < max_positions:
+            # Calculate moon's orbital position relative to parent
+            days_since_epoch = (current_time - datetime(2000, 1, 1)).total_seconds() / 86400
+            mean_anomaly = (days_since_epoch / moon_obj["period"]) * 2 * math.pi
+            
+            # Enhanced Kepler's equation solution
+            eccentric_anomaly = mean_anomaly
+            for _ in range(5):
+                eccentric_anomaly = mean_anomaly + moon_obj["e"] * math.sin(eccentric_anomaly)
+            
+            # True anomaly
+            true_anomaly = 2 * math.atan2(
+                math.sqrt(1 + moon_obj["e"]) * math.sin(eccentric_anomaly/2),
+                math.sqrt(1 - moon_obj["e"]) * math.cos(eccentric_anomaly/2)
+            )
+            
+            # Moon's distance from parent
+            r_moon = moon_obj["a"] * (1 - moon_obj["e"] * math.cos(eccentric_anomaly))
+            
+            # Moon position in orbital plane
+            x_moon = r_moon * math.cos(true_anomaly)
+            y_moon = r_moon * math.sin(true_anomaly)
+            z_moon = 0
+            
+            # Apply inclination
+            inclination_rad = math.radians(moon_obj["i"])
+            y_moon_inclined = y_moon * math.cos(inclination_rad) - z_moon * math.sin(inclination_rad)
+            z_moon_inclined = y_moon * math.sin(inclination_rad) + z_moon * math.cos(inclination_rad)
+            
+            # Find corresponding parent position
+            parent_pos = None
+            for pos in parent_positions:
+                if pos["t"] == current_time.isoformat():
+                    parent_pos = pos
+                    break
+            
+            if parent_pos:
+                # Add moon position to parent position
+                final_x = parent_pos["r"][0] + x_moon
+                final_y = parent_pos["r"][1] + y_moon_inclined
+                final_z = parent_pos["r"][2] + z_moon_inclined
+                
+                positions.append({
+                    "t": current_time.isoformat(),
+                    "r": [float(final_x), float(final_y), float(final_z)],
+                    "v": [0.0, 0.0, 0.0]  # Simplified for moons
+                })
+            
+            current_time += timedelta(hours=step_hours)
+            position_count += 1
+        
+        print(f"Generated {len(positions)} moon positions for {moon_obj['name']}")
+        return positions
+        
+    except Exception as e:
+        print(f"Error generating moon positions for {moon_obj['name']}: {e}")
+        return []
 
 async def fetch_horizons_vectors(command: str, start: str, stop: str, step: str, center: str = "500@0") -> Dict[str, Any]:
     """Try NASA API first, fallback to generated positions"""
@@ -294,8 +710,9 @@ async def ephem(
     stop: str = Query(..., description="STOP_TIME, e.g., '2025-08-27'"),
     step: str = Query("6 h", description="STEP_SIZE, e.g., '6 h'"),
     center: str = Query("500@0", description="CENTER, default Sun barycenter (500@0)"),
+    include_moons: bool = Query(True, description="Include moons for planets"),
 ):
-    key = ("ephem", horizons_ids, start, stop, step, center)
+    key = ("ephem", horizons_ids, start, stop, step, center, include_moons)
     if (c := _get_cached(key)) is not None:
         return c
 
@@ -303,8 +720,17 @@ async def ephem(
     # Ensure the Sun (10) is always included and first for center reference
     if "10" not in ids:
         ids = ["10", *ids]
+    
+    # Expand to include moons if requested
+    expanded_ids = ids.copy()
+    if include_moons:
+        for obj_id in ids:
+            if obj_id in CELESTIAL_OBJECTS and CELESTIAL_OBJECTS[obj_id]['type'] == 'planet':
+                moons = CELESTIAL_OBJECTS[obj_id].get('moons', [])
+                expanded_ids.extend(moons)
+    
     out = []
-    for hid in ids:
+    for hid in expanded_ids:
         try:
             res = await fetch_horizons_vectors(hid, start, stop, step, center=center)
             out.append(res)
@@ -602,19 +1028,37 @@ async def get_planet_info(planet_id: str):
 
 @app.get("/api/solar-system-overview")
 async def get_solar_system_overview():
-    """Get overview of all planets in the solar system"""
+    """Get comprehensive overview of the solar system including moons"""
     planets = []
+    moons = []
     
-    for planet_id, elem in ORBITAL_ELEMENTS.items():
-        au_distance = elem["a"] / 149597870.7
-        planets.append({
-            "id": planet_id,
-            "name": elem["name"],
-            "distance_au": round(au_distance, 2),
-            "period_years": round(elem["period"] / 365.25, 2),
-            "radius_km": elem["radius"],
-            "mass_relative_to_earth": round(elem["mass"] / 5.972e24, 2)
-        })
+    for obj_id, obj in CELESTIAL_OBJECTS.items():
+        if obj['type'] == 'planet':
+            au_distance = obj["a"] / 149597870.7
+            planet_data = {
+                "id": obj_id,
+                "name": obj["name"],
+                "type": obj["type"],
+                "distance_au": round(au_distance, 2),
+                "period_years": round(obj["period"] / 365.25, 2),
+                "radius_km": obj["radius"],
+                "mass_relative_to_earth": round(obj["mass"] / 5.972e24, 2),
+                "atmosphere": obj["atmosphere"],
+                "rings": obj["rings"],
+                "moons": obj["moons"]
+            }
+            planets.append(planet_data)
+        elif obj['type'] == 'moon':
+            moon_data = {
+                "id": obj_id,
+                "name": obj["name"],
+                "parent": obj["parent"],
+                "distance_from_parent_km": obj["a"],
+                "period_days": obj["period"],
+                "radius_km": obj["radius"],
+                "atmosphere": obj["atmosphere"]
+            }
+            moons.append(moon_data)
     
     # Sort by distance from Sun
     planets.sort(key=lambda p: p["distance_au"])
@@ -625,9 +1069,73 @@ async def get_solar_system_overview():
                 "name": "Sun",
                 "type": "G-type main-sequence star",
                 "age_billion_years": 4.6,
-                "diameter_km": 1392700
+                "diameter_km": 1392700,
+                "mass_kg": 1.989e30
             },
             "planets": planets,
-            "total_planets": len(planets)
+            "moons": moons,
+            "total_planets": len(planets),
+            "total_moons": len(moons)
         }
     }
+
+@app.get("/api/celestial-objects")
+async def get_celestial_objects():
+    """Get all celestial objects with their properties"""
+    return {
+        "objects": CELESTIAL_OBJECTS,
+        "textures": NASA_TEXTURES,
+        "total_count": len(CELESTIAL_OBJECTS)
+    }
+
+@app.get("/api/celestial-objects/{object_id}")
+async def get_celestial_object(object_id: str):
+    """Get detailed information about a specific celestial object"""
+    if object_id not in CELESTIAL_OBJECTS:
+        raise HTTPException(status_code=404, detail="Object not found")
+    
+    obj = CELESTIAL_OBJECTS[object_id]
+    
+    # Calculate additional derived information
+    au_distance = obj["a"] / 149597870.7 if obj["a"] > 0 else 0
+    escape_velocity = 0
+    if obj["mass"] > 0 and obj["radius"] > 0:
+        escape_velocity = math.sqrt(2 * 6.674e-11 * obj["mass"] / (obj["radius"] * 1000)) / 1000  # km/s
+    
+    # Get texture URL
+    texture_url = NASA_TEXTURES.get(object_id, "")
+    
+    result = {
+        "id": object_id,
+        "name": obj["name"],
+        "type": obj["type"],
+        "texture_url": texture_url,
+        "orbital_data": {
+            "semi_major_axis_km": obj["a"],
+            "semi_major_axis_au": round(au_distance, 6),
+            "eccentricity": obj["e"],
+            "inclination_degrees": obj["i"],
+            "orbital_period_days": obj["period"],
+            "orbital_period_years": round(obj["period"] / 365.25, 6) if obj["period"] > 0 else 0
+        },
+        "physical_data": {
+            "mass_kg": obj["mass"],
+            "radius_km": obj["radius"],
+            "escape_velocity_km_s": round(escape_velocity, 2) if escape_velocity > 0 else None,
+            "surface_gravity_earth": round((obj["mass"] / 5.972e24) * (6371.0 / obj["radius"])**2, 2) if obj["mass"] > 0 and obj["radius"] > 0 else None
+        },
+        "features": {
+            "atmosphere": obj["atmosphere"],
+            "rings": obj["rings"]
+        }
+    }
+    
+    # Add moon information for planets
+    if obj["type"] == "planet" and "moons" in obj:
+        result["moons"] = obj["moons"]
+    
+    # Add parent information for moons
+    if obj["type"] == "moon" and "parent" in obj:
+        result["parent"] = obj["parent"]
+    
+    return result

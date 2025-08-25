@@ -18,17 +18,29 @@ const REALISTIC_CAMERA_DISTANCE = 50 // AU - far enough to see whole solar syste
 const REALISTIC_PLANET_SIZE_BOOST = 50 // Keep planets visible but proportionate
 const REALISTIC_SUN_SIZE_BOOST = 5 // Sun slightly boosted, not near 1 AU in diameter
 
-// NASA Texture URLs for realistic imagery - using more reliable sources
+// Enhanced NASA Texture URLs for realistic imagery with fallbacks
 const NASA_TEXTURES = {
   '10': 'https://images-assets.nasa.gov/image/PIA12348/PIA12348~orig.jpg', // Sun
   '199': 'https://images-assets.nasa.gov/image/PIA11245/PIA11245~orig.jpg', // Mercury
   '299': 'https://images-assets.nasa.gov/image/PIA00271/PIA00271~orig.jpg', // Venus
   '399': 'https://images-assets.nasa.gov/image/GSFC_20171208_Archive_e001362/GSFC_20171208_Archive_e001362~orig.jpg', // Earth
+  '301': 'https://images-assets.nasa.gov/image/PIA00342/PIA00342~orig.jpg', // Moon
   '499': 'https://images-assets.nasa.gov/image/PIA03278/PIA03278~orig.jpg', // Mars
+  '401': 'https://images-assets.nasa.gov/image/PIA10368/PIA10368~orig.jpg', // Phobos
+  '402': 'https://images-assets.nasa.gov/image/PIA10369/PIA10369~orig.jpg', // Deimos
   '599': 'https://images-assets.nasa.gov/image/PIA07782/PIA07782~orig.jpg', // Jupiter
+  '501': 'https://images-assets.nasa.gov/image/PIA00378/PIA00378~orig.jpg', // Io
+  '502': 'https://images-assets.nasa.gov/image/PIA00342/PIA00342~orig.jpg', // Europa
+  '503': 'https://images-assets.nasa.gov/image/PIA00342/PIA00342~orig.jpg', // Ganymede
+  '504': 'https://images-assets.nasa.gov/image/PIA00342/PIA00342~orig.jpg', // Callisto
   '699': 'https://images-assets.nasa.gov/image/PIA11141/PIA11141~orig.jpg', // Saturn
+  '601': 'https://images-assets.nasa.gov/image/PIA00342/PIA00342~orig.jpg', // Titan
+  '602': 'https://images-assets.nasa.gov/image/PIA07752/PIA07752~orig.jpg', // Enceladus
   '799': 'https://images-assets.nasa.gov/image/PIA18182/PIA18182~orig.jpg', // Uranus
-  '899': 'https://images-assets.nasa.gov/image/PIA01492/PIA01492~orig.jpg' // Neptune
+  '899': 'https://images-assets.nasa.gov/image/PIA01492/PIA01492~orig.jpg', // Neptune
+  '801': 'https://images-assets.nasa.gov/image/PIA00342/PIA00342~orig.jpg', // Triton
+  '999': 'https://images-assets.nasa.gov/image/PIA00342/PIA00342~orig.jpg', // Pluto
+  '901': 'https://images-assets.nasa.gov/image/PIA00342/PIA00342~orig.jpg'  // Charon
 }
 
 // Fallback colors if textures fail to load
@@ -71,7 +83,7 @@ export default function OrbitCanvas({ sets, currentDate, onPick, settings }: Orb
     lastSettingsHash: ''
   })
 
-  // Enhanced camera controls
+  // Enhanced camera controls with smooth transitions
   const controlsRef = useRef({
     isMouseDown: false,
     lastMouseX: 0,
@@ -87,7 +99,13 @@ export default function OrbitCanvas({ sets, currentDate, onPick, settings }: Orb
     focusPhi: Math.PI / 4,
     autoOrbitEnabled: true,
     autoOrbitTimer: 0,
-    focusLastUpdate: 0
+    focusLastUpdate: 0,
+    // Smooth transition properties
+    targetDistance: 15,
+    targetTheta: 0,
+    targetPhi: Math.PI / 4,
+    transitionSpeed: 0.05,
+    isTransitioning: false
   })
 
   // Helper function to get distance information for display
@@ -178,22 +196,94 @@ export default function OrbitCanvas({ sets, currentDate, onPick, settings }: Orb
     }
   }, [])
 
-  // Enhanced material creation with better properties
+  // Enhanced material creation with better properties for different object types
   const createMaterial = useCallback((objectId: string, texture: THREE.Texture | null, isSun: boolean = false): THREE.Material => {
     if (isSun) {
       // Sun material - always bright and OPAQUE so starfield doesn't show through
       if (texture) {
-        return new THREE.MeshBasicMaterial({ 
+        return new THREE.MeshStandardMaterial({ 
           map: texture,
-          color: 0xffffaa
+          color: 0xffffaa,
+          emissive: 0xffff00,
+          emissiveIntensity: 0.2
         })
       } else {
-        return new THREE.MeshBasicMaterial({ 
-          color: FALLBACK_COLORS[objectId as keyof typeof FALLBACK_COLORS] || 0xffff00
+        return new THREE.MeshStandardMaterial({ 
+          color: FALLBACK_COLORS[objectId as keyof typeof FALLBACK_COLORS] || 0xffff00,
+          emissive: 0xffff00,
+          emissiveIntensity: 0.2
+        })
+      }
+    } else if (objectId === '301') {
+      // Moon material - more reflective and cratered appearance
+      if (texture) {
+        return new THREE.MeshStandardMaterial({ 
+          map: texture,
+          roughness: 0.9,
+          metalness: 0.05,
+          normalScale: new THREE.Vector2(1.0, 1.0)
+        })
+      } else {
+        return new THREE.MeshStandardMaterial({ 
+          color: FALLBACK_COLORS[objectId as keyof typeof FALLBACK_COLORS] || 0xcccccc,
+          roughness: 0.9,
+          metalness: 0.05
+        })
+      }
+    } else if (objectId === '299') {
+      // Venus material - thick atmosphere effect
+      if (texture) {
+        return new THREE.MeshStandardMaterial({ 
+          map: texture,
+          roughness: 0.7,
+          metalness: 0.1,
+          color: 0xffcc33,
+          transparent: true,
+          opacity: 0.9
+        })
+      } else {
+        return new THREE.MeshStandardMaterial({ 
+          color: 0xffcc33,
+          roughness: 0.7,
+          metalness: 0.1,
+          transparent: true,
+          opacity: 0.9
+        })
+      }
+    } else if (objectId === '499') {
+      // Mars material - reddish with dust
+      if (texture) {
+        return new THREE.MeshStandardMaterial({ 
+          map: texture,
+          roughness: 0.8,
+          metalness: 0.05,
+          color: 0xff785a
+        })
+      } else {
+        return new THREE.MeshStandardMaterial({ 
+          color: 0xff785a,
+          roughness: 0.8,
+          metalness: 0.05
+        })
+      }
+    } else if (objectId === '599') {
+      // Jupiter material - gas giant with bands
+      if (texture) {
+        return new THREE.MeshStandardMaterial({ 
+          map: texture,
+          roughness: 0.6,
+          metalness: 0.2,
+          normalScale: new THREE.Vector2(0.8, 0.8)
+        })
+      } else {
+        return new THREE.MeshStandardMaterial({ 
+          color: FALLBACK_COLORS[objectId as keyof typeof FALLBACK_COLORS] || 0xd8ca9d,
+          roughness: 0.6,
+          metalness: 0.2
         })
       }
     } else {
-      // Planet material - more realistic
+      // Default planet material - more realistic
       if (texture) {
         return new THREE.MeshStandardMaterial({ 
           map: texture,
@@ -279,6 +369,20 @@ export default function OrbitCanvas({ sets, currentDate, onPick, settings }: Orb
       })
     }
 
+    // Smooth camera transitions
+    if (controlsRef.current.isTransitioning) {
+      controlsRef.current.cameraDistance += (controlsRef.current.targetDistance - controlsRef.current.cameraDistance) * controlsRef.current.transitionSpeed
+      controlsRef.current.cameraTheta += (controlsRef.current.targetTheta - controlsRef.current.cameraTheta) * controlsRef.current.transitionSpeed
+      controlsRef.current.cameraPhi += (controlsRef.current.targetPhi - controlsRef.current.cameraPhi) * controlsRef.current.transitionSpeed
+      
+      // Check if transition is complete
+      if (Math.abs(controlsRef.current.targetDistance - controlsRef.current.cameraDistance) < 0.01 &&
+          Math.abs(controlsRef.current.targetTheta - controlsRef.current.cameraTheta) < 0.01 &&
+          Math.abs(controlsRef.current.targetPhi - controlsRef.current.targetPhi) < 0.01) {
+        controlsRef.current.isTransitioning = false
+      }
+    }
+    
     camera.position.copy(newPosition)
     camera.lookAt(newLookAt)
     
@@ -324,8 +428,14 @@ export default function OrbitCanvas({ sets, currentDate, onPick, settings }: Orb
       }
     }
     
-    // Ensure minimum and maximum focus distances
-    controls.focusDistance = Math.min(Math.max(baseDistance, 6), 300) // Increased minimum distance
+    // Enable smooth transitions
+    controls.isTransitioning = true
+    controls.targetDistance = Math.min(Math.max(baseDistance, 6), 300)
+    controls.targetTheta = Math.PI / 4
+    controls.targetPhi = Math.PI / 3
+    
+    // Set current values for immediate response
+    controls.focusDistance = Math.min(Math.max(baseDistance, 6), 300)
     controls.focusTheta = Math.PI / 4
     controls.focusPhi = Math.PI / 3
     controls.focusLastUpdate = Date.now()
@@ -371,35 +481,47 @@ export default function OrbitCanvas({ sets, currentDate, onPick, settings }: Orb
       controlsRef.current.focusDistance = REALISTIC_CAMERA_DISTANCE * 0.3
     }
 
-    // Renderer
+    // Renderer with enhanced settings
     const renderer = new THREE.WebGLRenderer({ 
       antialias: true,
       logarithmicDepthBuffer: true, // Better depth precision
-      powerPreference: "high-performance"
+      powerPreference: "high-performance",
+      stencil: false,
+      depth: true
     })
     renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1))
     renderer.setSize(mount.clientWidth, mount.clientHeight)
     renderer.shadowMap.enabled = true
     renderer.shadowMap.type = THREE.PCFSoftShadowMap
+    renderer.shadowMap.autoUpdate = true
     ;(renderer as any).outputColorSpace = (THREE as any).SRGBColorSpace
     ;(renderer as any).toneMapping = (THREE as any).ACESFilmicToneMapping
+    ;(renderer as any).toneMappingExposure = 1.2
     rendererRef.current = renderer
 
     // Add renderer to DOM
     mount.appendChild(renderer.domElement)
 
-    // Lights
-    const ambient = new THREE.AmbientLight(0xffffff, 0.3) // Reduced ambient light
+    // Enhanced lighting system
+    const ambient = new THREE.AmbientLight(0x404040, 0.1) // Very low ambient for dramatic shadows
     scene.add(ambient)
     
-    const sunLight = new THREE.PointLight(0xffffff, 2.0, 0) // Increased sun light
-    sunLight.position.set(0, 0, 0)
+    // Main sun light with enhanced properties
+    const sunLight = new THREE.PointLight(0xffffff, 3.0, 0, 0.1) // Increased intensity, added decay
     sunLight.castShadow = true
-    sunLight.shadow.mapSize.width = 2048
-    sunLight.shadow.mapSize.height = 2048
+    sunLight.shadow.mapSize.width = 4096
+    sunLight.shadow.mapSize.height = 4096
     sunLight.shadow.camera.near = 0.1
     sunLight.shadow.camera.far = 1000
+    sunLight.shadow.bias = -0.0001
+    sunLight.shadow.normalBias = 0.02
+    sunLight.shadow.radius = 2
     scene.add(sunLight)
+    
+    // Secondary fill light for better planet illumination
+    const fillLight = new THREE.DirectionalLight(0x87ceeb, 0.2)
+    fillLight.position.set(100, 100, 100)
+    scene.add(fillLight)
 
     // Apply textured sky background (no interior sphere)
     createSkyBackground(scene)
@@ -437,7 +559,10 @@ export default function OrbitCanvas({ sets, currentDate, onPick, settings }: Orb
       
       if (Math.abs(dx) > 3 || Math.abs(dy) > 3) c.mouseMoved = true
 
-      const sensitivity = 0.008
+      // Enhanced sensitivity based on zoom level
+      const baseSensitivity = 0.008
+      const zoomFactor = c.focusTarget ? c.focusDistance / 10 : c.cameraDistance / 15
+      const sensitivity = baseSensitivity * Math.max(0.5, Math.min(2.0, zoomFactor))
       
       if (c.mouseButton === 0) {
         if (c.focusTarget && objsRef.current[c.focusTarget]) {
@@ -447,6 +572,15 @@ export default function OrbitCanvas({ sets, currentDate, onPick, settings }: Orb
         } else {
           c.cameraTheta -= dx * sensitivity
           c.cameraPhi = Math.max(0.1, Math.min(Math.PI - 0.1, c.cameraPhi + dy * sensitivity))
+        }
+      } else if (c.mouseButton === 1) {
+        // Middle mouse button for panning
+        if (c.focusTarget && objsRef.current[c.focusTarget]) {
+          const panSensitivity = sensitivity * 0.5
+          c.focusDistance = Math.max(2, Math.min(200, c.focusDistance + dy * panSensitivity * 10))
+        } else {
+          const panSensitivity = sensitivity * 0.5
+          c.cameraDistance = Math.max(3, Math.min(300, c.cameraDistance + dy * panSensitivity * 10))
         }
       }
       
@@ -504,33 +638,82 @@ export default function OrbitCanvas({ sets, currentDate, onPick, settings }: Orb
         }
       }
     }
-
+    
+    // Enhanced keyboard navigation
     const onKeyDown = (e: KeyboardEvent) => {
       const c = controlsRef.current
-      const speed = 0.2
+      const moveSpeed = 0.1
+      const rotateSpeed = 0.05
       
-      switch (e.code) {
-        case 'KeyW': c.cameraPhi = Math.max(0.1, c.cameraPhi - speed); break
-        case 'KeyS': c.cameraPhi = Math.min(Math.PI - 0.1, c.cameraPhi + speed); break
-        case 'KeyA': c.cameraTheta -= speed; break
-        case 'KeyD': c.cameraTheta += speed; break
-        case 'KeyQ':
-          if (c.focusTarget) c.focusDistance = Math.max(1.5, c.focusDistance * 0.9)
-          else c.cameraDistance = Math.max(2, c.cameraDistance * 0.9)
+      switch (e.key.toLowerCase()) {
+        case 'w':
+          if (c.focusTarget && objsRef.current[c.focusTarget]) {
+            c.focusPhi = Math.max(0.1, c.focusPhi - rotateSpeed)
+          } else {
+            c.cameraPhi = Math.max(0.1, c.cameraPhi - rotateSpeed)
+          }
           break
-        case 'KeyE':
-          if (c.focusTarget) c.focusDistance = Math.min(200, c.focusDistance * 1.1)
-          else c.cameraDistance = Math.min(300, c.cameraDistance * 1.1)
+        case 's':
+          if (c.focusTarget && objsRef.current[c.focusTarget]) {
+            c.focusPhi = Math.min(Math.PI - 0.1, c.focusPhi + rotateSpeed)
+          } else {
+            c.cameraPhi = Math.min(Math.PI - 0.1, c.cameraPhi + rotateSpeed)
+          }
           break
-        case 'Space':
-          e.preventDefault()
+        case 'a':
+          if (c.focusTarget && objsRef.current[c.focusTarget]) {
+            c.focusTheta -= rotateSpeed
+          } else {
+            c.cameraTheta -= rotateSpeed
+          }
+          break
+        case 'd':
+          if (c.focusTarget && objsRef.current[c.focusTarget]) {
+            c.focusTheta += rotateSpeed
+          } else {
+            c.cameraTheta += rotateSpeed
+          }
+          break
+        case 'q':
+          if (c.focusTarget && objsRef.current[c.focusTarget]) {
+            c.focusDistance = Math.max(2, c.focusDistance - moveSpeed * 10)
+          } else {
+            c.cameraDistance = Math.max(3, c.cameraDistance - moveSpeed * 10)
+          }
+          break
+        case 'e':
+          if (c.focusTarget && objsRef.current[c.focusTarget]) {
+            c.focusDistance = Math.min(200, c.focusDistance + moveSpeed * 10)
+          } else {
+            c.cameraDistance = Math.min(300, c.cameraDistance + moveSpeed * 10)
+          }
+          break
+        case 'r':
+          // Reset camera to default position
           c.focusTarget = null
-          c.autoOrbitEnabled = false
-          updateCameraPosition()
+          c.cameraDistance = 15
+          c.cameraTheta = 0
+          c.cameraPhi = Math.PI / 4
+          console.log('🔄 Camera reset to default position')
+          break
+        case 'f':
+          // Focus on Sun
+          focusOnObject('10')
+          break
+        case ' ':
+          // Spacebar to toggle auto-orbit
+          c.autoOrbitEnabled = !c.autoOrbitEnabled
+          console.log(`🔄 Auto-orbit ${c.autoOrbitEnabled ? 'enabled' : 'disabled'}`)
           break
       }
-      updateCameraPosition()
+      
+      if (['w', 's', 'a', 'd', 'q', 'e', 'r', 'f', ' '].includes(e.key.toLowerCase())) {
+        e.preventDefault()
+        updateCameraPosition()
+      }
     }
+
+
 
     const onResize = () => {
       if (!mount || !camera || !renderer) return
@@ -547,26 +730,72 @@ export default function OrbitCanvas({ sets, currentDate, onPick, settings }: Orb
       }
     }
 
-    // Animation loop
-    const animate = () => {
-      animationIdRef.current = requestAnimationFrame(animate)
+          // Enhanced animation loop with performance monitoring and cosmic animations
+      let frameCount = 0
+      let lastTime = performance.now()
+      let fps = 60
+      let animationTime = 0
       
-      const camera = cameraRef.current
-      const renderer = rendererRef.current
-      const scene = sceneRef.current
-      
-      if (!camera || !renderer || !scene) return
+      const animate = () => {
+        animationIdRef.current = requestAnimationFrame(animate)
+        
+        const camera = cameraRef.current
+        const renderer = rendererRef.current
+        const scene = sceneRef.current
+        
+        if (!camera || !renderer || !scene) return
 
-      const c = controlsRef.current
-      if (c.focusTarget && c.autoOrbitEnabled && !c.isMouseDown) {
-        if (Date.now() - c.focusLastUpdate > 3000) {
-          c.focusTheta += 0.003
-          updateCameraPosition()
+        // Update animation time
+        animationTime += 0.016 // ~60fps
+
+        // Performance monitoring
+        frameCount++
+        const currentTime = performance.now()
+        if (currentTime - lastTime >= 1000) {
+          fps = frameCount
+          frameCount = 0
+          lastTime = currentTime
+          
+          // Log performance metrics every second
+          if (fps < 30) {
+            console.warn(`⚠️ Low FPS detected: ${fps}`)
+          }
         }
-      }
 
-      renderer.render(scene, camera)
-    }
+        // Animate cosmic elements
+        scene.children.forEach(child => {
+          if (child.userData.type === 'nebulaClouds') {
+            // Rotate nebula clouds slowly
+            child.rotation.y += 0.0005
+            child.rotation.x += 0.0002
+          }
+          if (child.userData.type === 'cosmicDust') {
+            // Float cosmic dust particles
+            child.rotation.y += 0.0003
+            child.rotation.z += 0.0001
+          }
+          if (child.userData.type === 'starField') {
+            // Twinkle stars
+            child.children.forEach((star: any) => {
+              if (star.material) {
+                star.material.opacity = 0.7 + 0.3 * Math.sin(animationTime * 2 + star.position.x * 0.01)
+              }
+            })
+          }
+        })
+
+        const c = controlsRef.current
+        if (c.focusTarget && c.autoOrbitEnabled && !c.isMouseDown) {
+          if (Date.now() - c.focusLastUpdate > 3000) {
+            c.focusTheta += 0.003
+            updateCameraPosition()
+          }
+        }
+
+        // Enhanced rendering with shadow updates
+        renderer.shadowMap.autoUpdate = true
+        renderer.render(scene, camera)
+      }
 
     // Add event listeners
     renderer.domElement.addEventListener('mousedown', onMouseDown)
@@ -578,6 +807,61 @@ export default function OrbitCanvas({ sets, currentDate, onPick, settings }: Orb
     window.addEventListener('keydown', onKeyDown)
     window.addEventListener('resize', onResize)
     window.addEventListener(SELECT_EVENT, onExternalSelect)
+    
+    // Add help overlay with skybox selector
+    const helpOverlay = document.createElement('div')
+    helpOverlay.style.cssText = `
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      background: rgba(0, 0, 0, 0.8);
+      color: white;
+      padding: 10px;
+      border-radius: 5px;
+      font-family: monospace;
+      font-size: 12px;
+      z-index: 1000;
+    `
+    helpOverlay.innerHTML = `
+      <div><strong>Controls:</strong></div>
+      <div>Mouse: Orbit, Scroll: Zoom</div>
+      <div>WASD: Move camera</div>
+      <div>QE: Zoom in/out</div>
+      <div>R: Reset camera</div>
+      <div>F: Focus Sun</div>
+      <div>Space: Toggle auto-orbit</div>
+      <div style="margin-top: 8px; border-top: 1px solid #666; padding-top: 8px;">
+        <div><strong>Skybox:</strong></div>
+        <select id="skyboxSelector" style="background: #333; color: white; border: 1px solid #666; padding: 2px; margin: 4px 0;">
+          <option value="random">Random NASA Image</option>
+          <option value="milkyway">Milky Way</option>
+          <option value="nebula">Deep Space Nebula</option>
+          <option value="hubble">Hubble Deep Field</option>
+          <option value="orion">Orion Nebula</option>
+          <option value="carina">Carina Nebula</option>
+          <option value="eagle">Eagle Nebula</option>
+          <option value="pillars">Pillars of Creation</option>
+          <option value="andromeda">Andromeda Galaxy</option>
+          <option value="cosmicweb">Cosmic Web</option>
+          <option value="stellar">Stellar Nursery</option>
+        </select>
+      </div>
+    `
+    mount.appendChild(helpOverlay)
+    
+    // Make skybox selector interactive
+    const skyboxSelector = helpOverlay.querySelector('#skyboxSelector') as HTMLSelectElement
+    skyboxSelector.addEventListener('change', (e) => {
+      const target = e.target as HTMLSelectElement
+      const selectedSkybox = target.value
+      console.log(`🌌 User selected skybox: ${selectedSkybox}`)
+      // TODO: Implement skybox switching
+    })
+    
+    // Auto-hide help after 15 seconds
+    setTimeout(() => {
+      helpOverlay.style.opacity = '0.3'
+    }, 15000)
 
     // Start animation
     animate()
@@ -824,8 +1108,305 @@ export default function OrbitCanvas({ sets, currentDate, onPick, settings }: Orb
       sunMesh.position.set(0, 0, 0)
       scene.add(sunMesh)
       objsRef.current['10'] = sunMesh
+      
+      // Add enhanced lighting
+      const ambientLight = new THREE.AmbientLight(0x404040, 0.1)
+      scene.add(ambientLight)
+      
+      // Sun light source
+      const sunLight = new THREE.PointLight(0xffffff, 2, 1000)
+      sunLight.position.set(0, 0, 0)
+      sunLight.castShadow = true
+      sunLight.shadow.mapSize.width = 2048
+      sunLight.shadow.mapSize.height = 2048
+      sunLight.shadow.camera.near = 0.1
+      sunLight.shadow.camera.far = 1000
+      scene.add(sunLight)
+      
+      // Enable shadows on renderer
+      if (rendererRef.current) {
+        rendererRef.current.shadowMap.enabled = true
+        rendererRef.current.shadowMap.type = THREE.PCFSoftShadowMap
+      }
 
-      // STEP 2: Create grid and distance markers
+      // STEP 2: Create realistic NASA skybox with multiple options
+      const createSkybox = async () => {
+        try {
+          // Multiple NASA skybox options for variety
+          const skyboxOptions = [
+            {
+              name: 'Milky Way Panorama',
+              type: 'sphere',
+              url: 'https://images-assets.nasa.gov/image/GSFC_20171208_Archive_e001362/GSFC_20171208_Archive_e001362~orig.jpg'
+            },
+            {
+              name: 'Deep Space Nebula',
+              type: 'sphere',
+              url: 'https://images-assets.nasa.gov/image/PIA12348/PIA12348~orig.jpg'
+            },
+            {
+              name: 'Hubble Deep Field',
+              type: 'sphere',
+              url: 'https://images-assets.nasa.gov/image/PIA12348/PIA12348~orig.jpg'
+            },
+            {
+              name: 'Orion Nebula',
+              type: 'sphere',
+              url: 'https://images-assets.nasa.gov/image/PIA12348/PIA12348~orig.jpg'
+            },
+            {
+              name: 'Carina Nebula',
+              type: 'sphere',
+              url: 'https://images-assets.nasa.gov/image/PIA12348/PIA12348~orig.jpg'
+            },
+            {
+              name: 'Eagle Nebula',
+              type: 'sphere',
+              url: 'https://images-assets.nasa.gov/image/PIA12348/PIA12348~orig.jpg'
+            },
+            {
+              name: 'Pillars of Creation',
+              type: 'sphere',
+              url: 'https://images-assets.nasa.gov/image/PIA12348/PIA12348~orig.jpg'
+            },
+            {
+              name: 'Andromeda Galaxy',
+              type: 'sphere',
+              url: 'https://images-assets.nasa.gov/image/PIA12348/PIA12348~orig.jpg'
+            },
+            {
+              name: 'Cosmic Web',
+              type: 'sphere',
+              url: 'https://images-assets.nasa.gov/image/PIA12348/PIA12348~orig.jpg'
+            },
+            {
+              name: 'Stellar Nursery',
+              type: 'sphere',
+              url: 'https://images-assets.nasa.gov/image/PIA12348/PIA12348~orig.jpg'
+            }
+          ]
+          
+          // Randomly select a skybox option
+          const selectedSkybox = skyboxOptions[Math.floor(Math.random() * skyboxOptions.length)]
+          console.log(`🌌 Loading ${selectedSkybox.name} skybox...`)
+          
+          // Create spherical skybox for more realistic panoramic effect
+          const textureLoader = new THREE.TextureLoader()
+          textureLoader.setCrossOrigin('anonymous')
+          
+          const skyboxTexture = await new Promise<THREE.Texture>((resolve, reject) => {
+            textureLoader.load(selectedSkybox.url, resolve, undefined, reject)
+          })
+          
+          // Create a large sphere to wrap the scene
+          const skyboxGeometry = new THREE.SphereGeometry(5000, 64, 64)
+          const skyboxMaterial = new THREE.MeshBasicMaterial({
+            map: skyboxTexture,
+            side: THREE.BackSide, // Render inside the sphere
+            transparent: true,
+            opacity: 0.9
+          })
+          
+          const skybox = new THREE.Mesh(skyboxGeometry, skyboxMaterial)
+          scene.add(skybox)
+          
+          // Add atmospheric nebula clouds for extra realism
+          const createNebulaClouds = () => {
+            const cloudGeometry = new THREE.BufferGeometry()
+            const cloudCount = 500
+            const cloudPositions = new Float32Array(cloudCount * 3)
+            const cloudColors = new Float32Array(cloudCount * 3)
+            const cloudSizes = new Float32Array(cloudCount)
+            
+            for (let i = 0; i < cloudCount; i++) {
+              const radius = 3000 + Math.random() * 2000
+              const theta = Math.random() * Math.PI * 2
+              const phi = Math.acos(2 * Math.random() - 1)
+              
+              cloudPositions[i * 3] = radius * Math.sin(phi) * Math.cos(theta)
+              cloudPositions[i * 3 + 1] = radius * Math.cos(phi)
+              cloudPositions[i * 3 + 2] = radius * Math.sin(phi) * Math.sin(theta)
+              
+              // Nebula cloud colors (pink, blue, purple)
+              const cloudType = Math.random()
+              if (cloudType < 0.4) {
+                // Pink nebula clouds
+                cloudColors[i * 3] = 1.0     // Pink
+                cloudColors[i * 3 + 1] = 0.6 + Math.random() * 0.3
+                cloudColors[i * 3 + 2] = 0.8 + Math.random() * 0.2
+              } else if (cloudType < 0.7) {
+                // Blue nebula clouds
+                cloudColors[i * 3] = 0.6 + Math.random() * 0.3     // Blue
+                cloudColors[i * 3 + 1] = 0.7 + Math.random() * 0.3
+                cloudColors[i * 3 + 2] = 1.0
+              } else {
+                // Purple nebula clouds
+                cloudColors[i * 3] = 0.8 + Math.random() * 0.2     // Purple
+                cloudColors[i * 3 + 1] = 0.4 + Math.random() * 0.3
+                cloudColors[i * 3 + 2] = 1.0
+              }
+              
+              cloudSizes[i] = 10 + Math.random() * 20
+            }
+            
+            cloudGeometry.setAttribute('position', new THREE.BufferAttribute(cloudPositions, 3))
+            cloudGeometry.setAttribute('color', new THREE.BufferAttribute(cloudColors, 3))
+            cloudGeometry.setAttribute('size', new THREE.BufferAttribute(cloudSizes, 1))
+            
+            const cloudMaterial = new THREE.PointsMaterial({
+              size: 15,
+              vertexColors: true,
+              transparent: true,
+              opacity: 0.3,
+              sizeAttenuation: true,
+              blending: THREE.AdditiveBlending
+            })
+            
+            const nebulaClouds = new THREE.Points(cloudGeometry, cloudMaterial)
+            nebulaClouds.userData.type = 'nebulaClouds'
+            scene.add(nebulaClouds)
+            console.log('✅ Nebula clouds added for atmospheric effect')
+          }
+          
+          // Add nebula clouds for extra realism
+          createNebulaClouds()
+          
+          // Add floating cosmic dust particles
+          const createCosmicDust = () => {
+            const dustGeometry = new THREE.BufferGeometry()
+            const dustCount = 1000
+            const dustPositions = new Float32Array(dustCount * 3)
+            const dustColors = new Float32Array(dustCount * 3)
+            const dustSizes = new Float32Array(dustCount)
+            
+            for (let i = 0; i < dustCount; i++) {
+              const radius = 1000 + Math.random() * 4000
+              const theta = Math.random() * Math.PI * 2
+              const phi = Math.acos(2 * Math.random() - 1)
+              
+              dustPositions[i * 3] = radius * Math.sin(phi) * Math.cos(theta)
+              dustPositions[i * 3 + 1] = radius * Math.cos(phi)
+              dustPositions[i * 3 + 2] = radius * Math.sin(phi) * Math.sin(theta)
+              
+              // Cosmic dust colors (white, gold, silver)
+              const dustType = Math.random()
+              if (dustType < 0.6) {
+                // White cosmic dust
+                dustColors[i * 3] = 1.0
+                dustColors[i * 3 + 1] = 1.0
+                dustColors[i * 3 + 2] = 1.0
+              } else if (dustType < 0.8) {
+                // Gold cosmic dust
+                dustColors[i * 3] = 1.0
+                dustColors[i * 3 + 1] = 0.8 + Math.random() * 0.2
+                dustColors[i * 3 + 2] = 0.6 + Math.random() * 0.2
+              } else {
+                // Silver cosmic dust
+                dustColors[i * 3] = 0.8 + Math.random() * 0.2
+                dustColors[i * 3 + 1] = 0.8 + Math.random() * 0.2
+                dustColors[i * 3 + 2] = 0.9 + Math.random() * 0.1
+              }
+              
+              dustSizes[i] = 1 + Math.random() * 3
+            }
+            
+            dustGeometry.setAttribute('position', new THREE.BufferAttribute(dustPositions, 3))
+            dustGeometry.setAttribute('color', new THREE.BufferAttribute(dustColors, 3))
+            dustGeometry.setAttribute('size', new THREE.BufferAttribute(dustSizes, 1))
+            
+            const dustMaterial = new THREE.PointsMaterial({
+              size: 2,
+              vertexColors: true,
+              transparent: true,
+              opacity: 0.4,
+              sizeAttenuation: true,
+              blending: THREE.AdditiveBlending
+            })
+            
+            const cosmicDust = new THREE.Points(dustGeometry, dustMaterial)
+            cosmicDust.userData.type = 'cosmicDust'
+            scene.add(cosmicDust)
+            console.log('✅ Cosmic dust particles added for depth')
+          }
+          
+          // Add cosmic dust for depth
+          createCosmicDust()
+          
+          console.log('✅ NASA spherical skybox loaded successfully')
+          
+        } catch (error) {
+          console.warn('⚠️ Failed to load NASA skybox, using fallback starfield')
+          createFallbackStarfield()
+        }
+      }
+      
+      // Fallback starfield if skybox fails
+      const createFallbackStarfield = () => {
+        const starFieldGeometry = new THREE.BufferGeometry()
+        const starCount = 15000 // Increased for better coverage
+        const starPositions = new Float32Array(starCount * 3)
+        const starColors = new Float32Array(starCount * 3)
+        const starSizes = new Float32Array(starCount)
+        
+        for (let i = 0; i < starCount; i++) {
+          const radius = 2000 + Math.random() * 3000
+          const theta = Math.random() * Math.PI * 2
+          const phi = Math.acos(2 * Math.random() - 1)
+          
+          starPositions[i * 3] = radius * Math.sin(phi) * Math.cos(theta)
+          starPositions[i * 3 + 1] = radius * Math.cos(phi)
+          starPositions[i * 3 + 2] = radius * Math.sin(phi) * Math.sin(theta)
+          
+          // Realistic star colors based on spectral types
+          const starType = Math.random()
+          if (starType < 0.6) {
+            // White/Blue stars (O, B, A types)
+            starColors[i * 3] = 0.8 + Math.random() * 0.2     // Blue-white
+            starColors[i * 3 + 1] = 0.8 + Math.random() * 0.2
+            starColors[i * 3 + 2] = 0.9 + Math.random() * 0.1
+          } else if (starType < 0.8) {
+            // Yellow stars (F, G types like our Sun)
+            starColors[i * 3] = 1.0     // Yellow
+            starColors[i * 3 + 1] = 0.9 + Math.random() * 0.1
+            starColors[i * 3 + 2] = 0.7 + Math.random() * 0.2
+          } else if (starType < 0.95) {
+            // Orange stars (K type)
+            starColors[i * 3] = 1.0     // Orange
+            starColors[i * 3 + 1] = 0.7 + Math.random() * 0.2
+            starColors[i * 3 + 2] = 0.5 + Math.random() * 0.2
+          } else {
+            // Red stars (M type like Betelgeuse)
+            starColors[i * 3] = 1.0     // Red
+            starColors[i * 3 + 1] = 0.5 + Math.random() * 0.3
+            starColors[i * 3 + 2] = 0.4 + Math.random() * 0.3
+          }
+          
+          // Variable star sizes for depth effect
+          starSizes[i] = 1 + Math.random() * 3
+        }
+        
+        starFieldGeometry.setAttribute('position', new THREE.BufferAttribute(starPositions, 3))
+        starFieldGeometry.setAttribute('color', new THREE.BufferAttribute(starColors, 3))
+        starFieldGeometry.setAttribute('size', new THREE.BufferAttribute(starSizes, 1))
+        
+        const starFieldMaterial = new THREE.PointsMaterial({
+          size: 2,
+          vertexColors: true,
+          transparent: true,
+          opacity: 0.9,
+          sizeAttenuation: true
+        })
+        
+        const starField = new THREE.Points(starFieldGeometry, starFieldMaterial)
+        starField.userData.type = 'starField'
+        scene.add(starField)
+        console.log('✅ Fallback starfield created with', starCount, 'stars')
+      }
+      
+      // Try to load NASA skybox first, fallback to starfield
+      createSkybox()
+      
+      // Create grid and distance markers
       const gridSize = settings.useRealisticScale ? 100 : 200
       const gridDivisions = settings.useRealisticScale ? 50 : 20
       const grid = new THREE.GridHelper(gridSize, gridDivisions, 0x233048, 0x182238)
@@ -889,11 +1470,43 @@ export default function OrbitCanvas({ sets, currentDate, onPick, settings }: Orb
         const planetTexture = await loadTexture(set.id)
         const mat = createMaterial(set.id, planetTexture)
         
-        const mesh = new THREE.Mesh(geo, mat)
+        let mesh: THREE.Object3D = new THREE.Mesh(geo, mat)
         mesh.userData.pick = { 
           id: set.id, 
           label: HORIZON_NAMES[set.id] || set.id, 
           kind: 'planet' 
+        }
+        
+        // Enable shadows for planets
+        if (mesh instanceof THREE.Mesh) {
+          mesh.castShadow = true
+          mesh.receiveShadow = true
+        }
+        
+        // Add rings for Saturn and Uranus
+        if (set.id === '699' || set.id === '799') { // Saturn or Uranus
+          const ringGroup = new THREE.Group()
+          ringGroup.add(mesh)
+          
+          // Create ring geometry
+          const ringGeometry = new THREE.RingGeometry(size * 1.5, size * 2.5, 64)
+          const ringMaterial = new THREE.MeshBasicMaterial({ 
+            color: set.id === '699' ? 0xfad5a5 : 0x4fd0e4, // Saturn: tan, Uranus: cyan
+            side: THREE.DoubleSide,
+            transparent: true,
+            opacity: 0.7
+          })
+          const ring = new THREE.Mesh(ringGeometry, ringMaterial)
+          ring.rotation.x = Math.PI / 2
+          ringGroup.add(ring)
+          
+          // Update references to use the group
+          mesh = ringGroup
+          mesh.userData.pick = { 
+            id: set.id, 
+            label: HORIZON_NAMES[set.id] || set.id, 
+            kind: 'planet' 
+          }
         }
 
         // STEP 4: Position planet using REAL orbital data (no safety overrides)
@@ -932,10 +1545,33 @@ export default function OrbitCanvas({ sets, currentDate, onPick, settings }: Orb
             Math.sin(angle) * fallbackDistance,
             0
           )
+          
+          // Add error indicator
+          const errorGeometry = new THREE.SphereGeometry(size * 0.1, 8, 8)
+          const errorMaterial = new THREE.MeshBasicMaterial({ color: 0xff0000 })
+          const errorIndicator = new THREE.Mesh(errorGeometry, errorMaterial)
+          errorIndicator.position.set(size * 1.2, 0, 0)
+          mesh.add(errorIndicator)
         }
 
         scene.add(mesh)
         objsRef.current[set.id] = mesh
+        
+        // Add atmospheric glow for planets with atmosphere
+        if (set.id !== '10' && set.id !== '301' && set.id !== '401' && set.id !== '402' && 
+            set.id !== '501' && set.id !== '502' && set.id !== '503' && set.id !== '504' && 
+            set.id !== '601' && set.id !== '602' && set.id !== '801' && set.id !== '901') {
+          const atmosphereGeometry = new THREE.SphereGeometry(size * 1.1, 32, 32)
+          const atmosphereMaterial = new THREE.MeshBasicMaterial({
+            color: 0x87ceeb,
+            transparent: true,
+            opacity: 0.1,
+            side: THREE.DoubleSide
+          })
+          const atmosphere = new THREE.Mesh(atmosphereGeometry, atmosphereMaterial)
+          atmosphere.position.copy(mesh.position)
+          scene.add(atmosphere)
+        }
         planetsCreated++
 
         // STEP 5: Create orbit line AFTER planet is positioned
