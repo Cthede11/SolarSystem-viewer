@@ -36,7 +36,8 @@ export default function App() {
     useRealisticScale: false,
     useRealisticSizes: false,
     showOrbits: true,
-    followPlanet: null
+    followPlanet: null,
+    realisticVisibilityScale: 100
   })
 
   // Enhanced error handling with retry logic
@@ -91,7 +92,8 @@ export default function App() {
         
         console.log(`🔄 Loading ephemeris data: ${start} to ${stop}, step: ${stepSize}`)
         
-        const result = await getEphem(['10', '199', '299', '399', '499'], start, stop, stepSize)
+        // Fetch Sun + all major planets (Mercury→Neptune)
+        const result = await getEphem(['10', '199', '299', '399', '499', '599', '699', '799', '899'], start, stop, stepSize)
         
         if (!result || result.length === 0) {
           throw new Error('No ephemeris data received from API')

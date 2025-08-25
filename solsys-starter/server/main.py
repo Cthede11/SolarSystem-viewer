@@ -300,6 +300,9 @@ async def ephem(
         return c
 
     ids = [s.strip() for s in horizons_ids.split(",") if s.strip()]
+    # Ensure the Sun (10) is always included and first for center reference
+    if "10" not in ids:
+        ids = ["10", *ids]
     out = []
     for hid in ids:
         try:

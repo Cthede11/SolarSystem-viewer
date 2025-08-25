@@ -8,15 +8,15 @@ type SelectDetail = { id: string | null }
 const SELECT_EVENT = 'app:select'
 
 // Scale constants
-const VIEWING_SCALE = 1 / 50_000_000
+const VIEWING_SCALE = 1 / 5_000_000
 const REALISTIC_SCALE = 1 / 149_597_870.7 // 1 AU = 1 unit
 const MAX_VIEWING_DISTANCE = 200
 const MAX_REALISTIC_DISTANCE = 50
 
-// Realistic mode settings - carefully calculated
+// Realistic mode settings - tuned for accurate relative scales without engulfing the scene
 const REALISTIC_CAMERA_DISTANCE = 50 // AU - far enough to see whole solar system
-const REALISTIC_PLANET_SIZE_BOOST = 1000 // Make planets visible but not overwhelming
-const REALISTIC_SUN_SIZE_BOOST = 100 // Smaller boost for sun to prevent engulfing everything
+const REALISTIC_PLANET_SIZE_BOOST = 50 // Keep planets visible but proportionate
+const REALISTIC_SUN_SIZE_BOOST = 5 // Sun slightly boosted, not near 1 AU in diameter
 
 // NASA Texture URLs for realistic imagery - using more reliable sources
 const NASA_TEXTURES = {
@@ -181,13 +181,11 @@ export default function OrbitCanvas({ sets, currentDate, onPick, settings }: Orb
   // Enhanced material creation with better properties
   const createMaterial = useCallback((objectId: string, texture: THREE.Texture | null, isSun: boolean = false): THREE.Material => {
     if (isSun) {
-      // Sun material - always bright
+      // Sun material - always bright and OPAQUE so starfield doesn't show through
       if (texture) {
         return new THREE.MeshBasicMaterial({ 
           map: texture,
-          color: 0xffffaa,
-          transparent: true,
-          opacity: 0.95
+          color: 0xffffaa
         })
       } else {
         return new THREE.MeshBasicMaterial({ 
@@ -316,10 +314,10 @@ export default function OrbitCanvas({ sets, currentDate, onPick, settings }: Orb
       baseDistance = settings.useRealisticSizes ? Math.max(15, objDistance * 0.3) : 20
     } else {
       if (settings.useRealisticScale) {
-        // In realistic mode, ensure we can see the object and its surroundings
+        // In AU units, keep distance relative to actual orbital radius
         const planetSize = obj instanceof THREE.Mesh ? 
           (obj.geometry as THREE.SphereGeometry).parameters.radius : 1
-        baseDistance = Math.max(planetSize * 12, objDistance * 0.15) // Increased minimum distance
+        baseDistance = Math.max(planetSize * 50, objDistance * 1.1)
       } else {
         // Non-realistic scale - keep objects visible
         baseDistance = Math.max(12, objDistance * 0.4) // Increased minimum distance
@@ -379,9 +377,12 @@ export default function OrbitCanvas({ sets, currentDate, onPick, settings }: Orb
       logarithmicDepthBuffer: true, // Better depth precision
       powerPreference: "high-performance"
     })
+    renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1))
     renderer.setSize(mount.clientWidth, mount.clientHeight)
     renderer.shadowMap.enabled = true
     renderer.shadowMap.type = THREE.PCFSoftShadowMap
+    ;(renderer as any).outputColorSpace = (THREE as any).SRGBColorSpace
+    ;(renderer as any).toneMapping = (THREE as any).ACESFilmicToneMapping
     rendererRef.current = renderer
 
     // Add renderer to DOM
@@ -400,8 +401,8 @@ export default function OrbitCanvas({ sets, currentDate, onPick, settings }: Orb
     sunLight.shadow.camera.far = 1000
     scene.add(sunLight)
 
-    // Create accurate starfield skybox
-    createStarfieldSkybox(scene)
+    // Apply textured sky background (no interior sphere)
+    createSkyBackground(scene)
 
     // Event handlers
     const onMouseDown = (e: MouseEvent) => {
@@ -621,24 +622,33 @@ export default function OrbitCanvas({ sets, currentDate, onPick, settings }: Orb
     }
   }, []) // No dependencies - initialize once only
 
-  // Create accurate starfield skybox
-  const createStarfieldSkybox = (scene: THREE.Scene) => {
+  // Create sky background from equirectangular texture
+  const createSkyBackground = (scene: THREE.Scene) => {
+    try {
+      const loader = new THREE.TextureLoader()
+      // Free, stable stars equirectangular image (can be replaced with your asset)
+      const url = 'https://raw.githubusercontent.com/mrdoob/three.js/dev/examples/textures/2294472375_24a3b8ef46_o.jpg'
+      loader.setCrossOrigin('anonymous')
+      loader.load(url, (tex) => {
+        ;(tex as any).colorSpace = (THREE as any).SRGBColorSpace
+        scene.background = tex
+        console.log('✅ Sky background set from equirectangular texture')
+      }, undefined, (err) => {
+        console.warn('Sky background failed to load, falling back to procedural stars', err)
+        createProceduralStars(scene)
+      })
+    } catch (e) {
+      console.warn('Sky background error, using procedural stars', e)
+      createProceduralStars(scene)
+    }
+  }
+
+  // Optional procedural stars fallback
+  const createProceduralStars = (scene: THREE.Scene) => {
     console.log('🌟 Creating accurate starfield skybox')
     
-    // Create a large sphere for the skybox
-    const skyboxGeometry = new THREE.SphereGeometry(1000, 64, 64)
-    
-    // Create star material with realistic star colors
-    const starMaterial = new THREE.MeshBasicMaterial({
-      color: 0x000000,
-      side: THREE.BackSide
-    })
-    
-    const skybox = new THREE.Mesh(skyboxGeometry, starMaterial)
-    scene.add(skybox)
-    
     // Add individual stars with realistic positions and colors
-    const starCount = 10000
+    const starCount = 4000
     const starGeometry = new THREE.BufferGeometry()
     const starVertices: number[] = []
     const starColors: number[] = []
@@ -696,14 +706,17 @@ export default function OrbitCanvas({ sets, currentDate, onPick, settings }: Orb
     starGeometry.setAttribute('size', new THREE.Float32BufferAttribute(starSizes, 1))
     
     const starsMaterial = new THREE.PointsMaterial({
-      size: 2.0,
+      size: 0.8,
       sizeAttenuation: true,
       vertexColors: true,
       transparent: true,
-      opacity: 0.9
+      opacity: 0.85,
+      depthWrite: false
     })
     
     const stars = new THREE.Points(starGeometry, starsMaterial)
+    stars.renderOrder = -0.5
+    stars.name = 'stars'
     scene.add(stars)
     
     console.log(`✅ Created skybox with ${starCount} stars`)
@@ -790,8 +803,9 @@ export default function OrbitCanvas({ sets, currentDate, onPick, settings }: Orb
       let sunSize: number
       if (settings.useRealisticSizes) {
         const realSunSize = 696_340 * scale // Real sun size in scaled units
+        // In strict realistic sizes mode, do not boost
         sunSize = settings.useRealisticScale ? 
-          realSunSize * REALISTIC_SUN_SIZE_BOOST : 
+          Math.max(0.001, realSunSize) : 
           Math.max(2.0, realSunSize)
       } else {
         sunSize = 6.0 // Default viewing size
@@ -856,7 +870,9 @@ export default function OrbitCanvas({ sets, currentDate, onPick, settings }: Orb
         if (settings.useRealisticSizes) {
           const realSize = (REAL_SIZES[set.id] || 6371) * scale
           if (settings.useRealisticScale) {
-            size = Math.max(0.01, realSize * REALISTIC_PLANET_SIZE_BOOST)
+            // True-to-scale radii, with optional visibility multiplier for usability
+            const vis = Math.max(1, (settings as any).realisticVisibilityScale ?? 100)
+            size = Math.max(0.00002, realSize * vis)
           } else {
             size = Math.max(0.1, realSize)
           }

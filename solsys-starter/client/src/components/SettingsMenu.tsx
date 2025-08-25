@@ -61,6 +61,24 @@ export default function SettingsMenu({ settings, onSettingsChange, isOpen, onClo
               </div>
             </label>
 
+            {(settings.useRealisticScale && settings.useRealisticSizes) && (
+              <label className="setting-item" style={{ alignItems: 'stretch' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', width: '100%' }}>
+                  <span>Visibility Multiplier</span>
+                  <small>Temporarily enlarge radii for visibility (does not affect positions)</small>
+                  <input
+                    type="range"
+                    min={1}
+                    max={1000}
+                    step={1}
+                    value={settings.realisticVisibilityScale ?? 100}
+                    onChange={(e) => onSettingsChange({ ...settings, realisticVisibilityScale: Number(e.target.value) })}
+                  />
+                  <div style={{ fontSize: '12px', opacity: 0.8 }}>×{settings.realisticVisibilityScale ?? 100}</div>
+                </div>
+              </label>
+            )}
+
             {(settings.useRealisticScale || settings.useRealisticSizes) && (
               <div className="scale-warning">
                 ⚠️ Realistic scale makes planets very hard to see. Use camera follow mode below.

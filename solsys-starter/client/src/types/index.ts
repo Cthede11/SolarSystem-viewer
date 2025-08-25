@@ -5,6 +5,7 @@ export interface ViewSettings {
   useRealisticSizes: boolean
   showOrbits: boolean
   followPlanet: string | null
+  realisticVisibilityScale?: number // multiplier for radii when realistic sizes are on
 }
 
 export type ClickInfo = { 
