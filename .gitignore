@@ -1,0 +1,32 @@
+# Ignore Python virtual environments
+server/server-venv/
+
+# Ignore Python bytecode
+*.pyc
+__pycache__/
+
+# Ignore environment files
+.env
+
+# Ignore node_modules for frontend
+client/node_modules/
+
+# Ignore build output
+client/dist/
+
+# Ignore TypeScript build info
+client/tsconfig.tsbuildinfo
+
+# Ignore log files
+*.log
+
+# Ignore OS-specific files
+.DS_Store
+Thumbs.db
+
+# Ignore VS Code settings
+.vscode/
+
+# Ignore package-lock and yarn lock (optional)
+client/package-lock.json
+client/yarn.lock
