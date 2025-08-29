@@ -30,3 +30,6 @@ Thumbs.db
 # Ignore package-lock and yarn lock (optional)
 client/package-lock.json
 client/yarn.lock
+# Ignore all lib directories
+lib/
+**/lib/
